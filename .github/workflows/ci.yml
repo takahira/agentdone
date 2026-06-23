@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go build ./...
+      # gofmt is mandatory for published Go (pkg/cchooks is an importable
+      # package). Deterministic, so run it once on linux rather than per-OS.
+      - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
+        run: test -z "$(gofmt -l .)" || { echo "These files are not gofmt-clean:"; gofmt -l .; exit 1; }
+      - run: go vet ./...
+      # -race: internal/state's TestSweepStaleKeepsFreshRewrite is a goroutine
+      # smoke test written to run under the detector; plain `go test` silences it.
+      - run: go test -race ./...
+      # go.mod/go.sum must already be tidy: the release builds with
+      # `go mod verify` and must never need to mutate inputs.
+      - run: go mod tidy -diff
+      # staticcheck via go install (not the third-party action, which pulls a
+      # Node20 actions/cache and trips the deprecation warning). Pinned to the
+      # newest release that supports the go.mod floor: setup-go installs that
+      # exact Go with GOTOOLCHAIN=local, and staticcheck @latest (v0.7.0) needs
+      # go >= 1.25. Bump this in lockstep when the go directive in go.mod rises.
+      - run: go install honnef.co/go/tools/cmd/staticcheck@v0.6.1
+      - run: staticcheck ./...
+      # The demo seeds internal state by hand, so a state-layout or clock-unit
+      # change that forgets demo.sh surfaces here, not as a silently broken
+      # README walkthrough. The grep asserts the context-rich step-2 output.
+      - run: sh demo/demo.sh | grep -q "Refactor the parser"
+
+  # Compile every release target so platform-specific breakage (Windows path
+  # handling, etc.) is caught in CI — the release ships these but the test job
+  # only runs on linux/macos.
+  build-cross:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go build ./...
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check

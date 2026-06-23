@@ -1,0 +1,35 @@
+# goreleaser config for agentdone (single static binary, multi-arch).
+# Build a snapshot locally with: goreleaser release --snapshot --clean
+version: 2
+
+project_name: agentdone
+
+# Verify, don't mutate: `go mod tidy` here would CHANGE the build inputs at
+# release time; verify fails the release instead if go.mod/go.sum drifted
+# (CI's `go mod tidy -diff` catches the drift before it ever gets here).
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - main: ./cmd/agentdone
+    binary: agentdone
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/takahira/agentdone/internal/cli.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  draft: false
