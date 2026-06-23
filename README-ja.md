@@ -35,6 +35,13 @@ curl -fsSL https://raw.githubusercontent.com/takahira/agentdone/main/install.sh 
 agentdone init   # フックを配線し、Slack Webhook を一度だけ尋ねます
 ```
 
+Go ツールチェインがあればソースから:
+
+```sh
+go install github.com/takahira/agentdone/cmd/agentdone@latest
+agentdone init
+```
+
 以上です。次にターンが本当に終わったとき、きれいな通知が 1 通届きます。設定ファイルは
 不要。環境変数で微調整できます。
 

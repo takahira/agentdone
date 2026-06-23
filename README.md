@@ -21,9 +21,16 @@ curl -fsSL https://raw.githubusercontent.com/takahira/agentdone/main/install.sh 
 agentdone init   # wires the hooks + prompts once for your Slack webhook
 ```
 
+Have a Go toolchain? Install from source instead:
+
+```sh
+go install github.com/takahira/agentdone/cmd/agentdone@latest
+agentdone init
+```
+
 That's it — the next time a turn really finishes, you get one clean ping. No
 config file; tune it with [environment variables](#configuration-environment-variables)
-if you want. Build-from-source and the full story are under [Install](#install).
+if you want. More install options and details are under [Install](#install).
 
 ---
 
