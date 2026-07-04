@@ -101,13 +101,17 @@ func Save(sessionID string, t Turn) error {
 		return err
 	}
 	sweepStale()
-	b, err := json.Marshal(t)
+	return writeJSON(path(sessionID), t)
+}
+
+// writeJSON marshals v and atomically replaces p with it: a concurrent reader
+// sees either the old file or the new one, never a torn one. The temp lives in
+// the same dir so Rename stays on one fs.
+func writeJSON(p string, v any) error {
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	p := path(sessionID)
-	// Atomic write: a concurrent Peek sees either the old file or the new one,
-	// never a torn one. The temp lives in the same dir so Rename stays on one fs.
 	tmp, err := os.CreateTemp(filepath.Dir(p), "turn-*.tmp")
 	if err != nil {
 		return err
@@ -171,7 +175,8 @@ func shouldRemoveStale(info os.FileInfo, statErr error, cutoff time.Time) bool {
 }
 
 // Peek reads the turn state without removing it. ok is false when no state was
-// stored (e.g. a turn with no preceding UserPromptSubmit). Reading without
+// stored (e.g. a task-woken turn, whose synthetic wake prompt
+// handler.UserPromptSubmit deliberately does not save). Reading without
 // consuming matters for both mid-turn hooks (Notification, PreToolUse) and a
 // withheld Stop: a Stop suppressed because background work is still running must
 // leave the state for the later completion (the woken turn) to label itself.
@@ -217,6 +222,48 @@ func DeleteIf(sessionID string, expect Turn) {
 		Delete(sessionID)
 	}
 }
+
+// FailureNote records the last StopFailure notification actually sent for a
+// session: when it went out (Now() milliseconds) and the error text it carried.
+// It lives in its own <session>.stopfail.json rather than inside Turn because
+// the two have different lifetimes: a failure note must survive the turn (the
+// next failing turn is what reads it), while turn state is per-turn. The same
+// stale sweep and uninstall Clear reclaim it.
+type FailureNote struct {
+	Epoch int64  `json:"epoch"`
+	Error string `json:"error"`
+}
+
+// failurePath is collision-free against path(): safeID strips '.', so no
+// crafted session id can name another session's ".stopfail.json" file.
+func failurePath(sessionID string) string {
+	return filepath.Join(dir(), safeID(sessionID)+".stopfail.json")
+}
+
+// SaveFailure writes the failure note for a session (atomic, like Save).
+func SaveFailure(sessionID string, n FailureNote) error {
+	if err := ensureDir(); err != nil {
+		return err
+	}
+	return writeJSON(failurePath(sessionID), n)
+}
+
+// PeekFailure reads the failure note without removing it. ok is false when no
+// note is stored or it is unreadable/corrupt. Unlike Peek there is no debug
+// logging: losing a note fails OPEN to one extra error notification, not to
+// the silently dropped ping Peek's logging exists to diagnose.
+func PeekFailure(sessionID string) (n FailureNote, ok bool) {
+	b, err := os.ReadFile(failurePath(sessionID))
+	if err != nil || json.Unmarshal(b, &n) != nil {
+		return FailureNote{}, false
+	}
+	return n, true
+}
+
+// ClearFailure removes the failure note, if any. Called when a turn truly
+// completes: the failure episode is over, and the next error — identical or
+// not — is news again.
+func ClearFailure(sessionID string) { _ = os.Remove(failurePath(sessionID)) }
 
 // Now returns the current unix time in milliseconds. Handlers share this clock.
 // Milliseconds (not whole seconds) keep turn-boundary token accounting precise

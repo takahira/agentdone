@@ -50,7 +50,7 @@ agentdone init
 | とき | 通知 |
 | --- | --- |
 | ターン完了（既定 ≥ 300 秒、または平文の確認質問） | `✅ Done` / `✋ Waiting for confirmation`（セッション名・プロンプト・repo·branch・モデル・出力トークン・skill・要約） |
-| API エラーで終了（レート制限・過負荷・認証 …） | `❌ Ended on error`（所要時間に関係なく必ず送信） |
+| API エラーで終了（レート制限・過負荷・認証 …） | `❌ Ended on error`（所要時間に関係なく送信。ただし*同一エラー*の連発は既定 30 分ミュート＝`AGENTDONE_ERROR_COOLDOWN`） |
 | ターン終了時に背景作業が実行中 | *（何も送らない＝抑止）* |
 | 許可 / アイドルのプロンプト | `✋ Waiting for permission` / `✋ Waiting for input`（**ターミナルのみ**） |
 | `AskUserQuestion` / `ExitPlanMode` | `✋ Waiting for confirmation`（質問 / プラン抜粋つき） |

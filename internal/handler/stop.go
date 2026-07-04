@@ -42,7 +42,8 @@ func thresholdSeconds() int64 {
 // completion (or, for a confirmation question, a waiting) notification.
 func Stop(in *cchooks.Stop) {
 	// Peek, don't consume: a Stop withheld below must leave the turn state intact
-	// so the later completion (the turn the task wakes, which has no preceding
+	// so the later completion (the turn the task wakes — whose synthetic
+	// "<task-notification>" UserPromptSubmit is deliberately not saved, see
 	// UserPromptSubmit) can still report プロンプト / start time.
 	turn, _ := state.Peek(in.SessionID)
 	isAsk := looksLikeQuestion(in.LastAssistantMessage)
@@ -55,12 +56,15 @@ func Stop(in *cchooks.Stop) {
 	}
 	// Consume the saved state only when the turn is truly over. If a confirmation
 	// question ended the turn while background work is still running, keep it: the
-	// task will wake a later Stop (with no UserPromptSubmit of its own) whose
-	// completion still needs this turn's プロンプト / start time. DeleteIf is a
-	// compare-and-delete (see its doc): a slow async Stop must not clobber state a
-	// newer turn's UserPromptSubmit has already saved.
+	// task will wake a later Stop (whose synthetic wake prompt is not saved — see
+	// UserPromptSubmit) and that completion still needs this turn's プロンプト /
+	// start time. DeleteIf is a compare-and-delete (see its doc): a slow async
+	// Stop must not clobber state a newer turn's UserPromptSubmit has already
+	// saved. A truly-over turn also closes any failure episode: the next error —
+	// even an identical one — is news again, so clear the StopFailure cooldown.
 	if !waiting {
 		state.DeleteIf(in.SessionID, turn)
+		state.ClearFailure(in.SessionID)
 	}
 
 	sum := transcript.Aggregate(in.TranscriptPath, turn.StartEpoch)

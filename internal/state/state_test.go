@@ -34,6 +34,38 @@ func TestPeekMissing(t *testing.T) {
 	}
 }
 
+// The failure note (handler.StopFailure's cooldown record) round-trips through
+// its own .stopfail.json, independent of the session's Turn state.
+func TestFailureNoteRoundtrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	sid := "unit-failure-note"
+	if _, ok := PeekFailure(sid); ok {
+		t.Fatal("PeekFailure of missing note returned ok=true")
+	}
+	want := FailureNote{Epoch: 1234567890123, Error: "rate_limit: Too many requests"}
+	if err := SaveFailure(sid, want); err != nil {
+		t.Fatalf("SaveFailure: %v", err)
+	}
+	got, ok := PeekFailure(sid)
+	if !ok || got != want {
+		t.Fatalf("PeekFailure = %+v, %v; want %+v, true", got, ok, want)
+	}
+	// The note and the turn state are separate files: saving/consuming one must
+	// not disturb the other.
+	if err := Save(sid, Turn{StartEpoch: 1}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	Delete(sid)
+	if _, ok := PeekFailure(sid); !ok {
+		t.Fatal("deleting turn state removed the failure note")
+	}
+	ClearFailure(sid)
+	if _, ok := PeekFailure(sid); ok {
+		t.Fatal("ClearFailure did not remove the note")
+	}
+}
+
 func TestSafeID(t *testing.T) {
 	cases := map[string]string{
 		"abc-123_DEF":           "abc-123_DEF",
@@ -124,16 +156,17 @@ func TestSweepStale(t *testing.T) {
 	}
 
 	oldJSON := filepath.Join(dir(), "oldsession.json")
-	oldTmp := filepath.Join(dir(), "turn-orphan.tmp") // orphaned temp must be reclaimed too
+	oldTmp := filepath.Join(dir(), "turn-orphan.tmp")           // orphaned temp must be reclaimed too
+	oldFail := filepath.Join(dir(), "oldsession.stopfail.json") // failure notes ride the same sweep
 	fresh := filepath.Join(dir(), "freshsession.json")
-	for _, p := range []string{oldJSON, oldTmp, fresh} {
+	for _, p := range []string{oldJSON, oldTmp, oldFail, fresh} {
 		if err := os.WriteFile(p, []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Age the old files past staleAfter.
 	stale := time.Now().Add(-staleAfter - time.Hour)
-	for _, p := range []string{oldJSON, oldTmp} {
+	for _, p := range []string{oldJSON, oldTmp, oldFail} {
 		if err := os.Chtimes(p, stale, stale); err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +174,7 @@ func TestSweepStale(t *testing.T) {
 
 	sweepStale()
 
-	for _, p := range []string{oldJSON, oldTmp} {
+	for _, p := range []string{oldJSON, oldTmp, oldFail} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("stale file not swept: %s (err=%v)", filepath.Base(p), err)
 		}

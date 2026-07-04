@@ -184,6 +184,7 @@ agentdone is configured entirely through environment variables — no config fil
 | --- | --- | --- |
 | `SLACK_WEBHOOK_URL` | *(unset)* | The Slack Incoming Webhook. If unset, read from `$CLAUDE_CONFIG_DIR/hooks/.webhook`. |
 | `AGENTDONE_THRESHOLD` | `300` | Minimum turn length (seconds) to report a completion. `0` reports every completion — see [What it notifies](#what-it-notifies). |
+| `AGENTDONE_ERROR_COOLDOWN` | `1800` | Repeat-error window (seconds): the same error in the same session is reported once per window (a completed turn resets it). `0` reports every failure. |
 | `AGENTDONE_LANG` | *(auto)* | `en` (default) or `ja`. Always wins over the POSIX locale (`LC_ALL` > `LC_MESSAGES` > `LANG`). |
 | `AGENTDONE_DEBUG` | *(unset)* | When set, each hook logs to stderr why it stayed silent. |
 | `AGENTDONE_STDOUT` | *(unset)* | When `1`, prints the notification instead of POSTing to Slack (used by the demo). |
@@ -222,7 +223,7 @@ notes.
 | When | Notification |
 | --- | --- |
 | Turn finished (≥ 300 s by default, or a plain-text confirmation question) | `✅ Done` / `✋ Waiting for confirmation` with session title, prompt, repo·branch, model, output tokens, skill, and a one-line summary |
-| Turn ended on an API error (rate limit, overload, auth, …) (`StopFailure`) | `❌ Ended on error` with session context and the error — always sent, regardless of duration |
+| Turn ended on an API error (rate limit, overload, auth, …) (`StopFailure`) | `❌ Ended on error` with session context and the error — sent regardless of duration; repeats of the *same* error are muted for 30 min (`AGENTDONE_ERROR_COOLDOWN`) |
 | Background work still running at turn end | *(nothing — withheld)* |
 | Permission / idle prompt (`Notification`) | `✋ Waiting for permission` / `✋ Waiting for input` — *terminal only, see below* |
 | `AskUserQuestion` / `ExitPlanMode` (`PreToolUse`) | `✋ Waiting for confirmation` with the question / plan excerpt |
@@ -230,6 +231,14 @@ notes.
 `AGENTDONE_THRESHOLD` (seconds) tunes the completion floor. Setting it to `0`
 reports every completion, including turns whose start time is unknown — which any
 non-zero threshold withholds (see [Known limitations](#known-limitations)).
+
+Error pings are duration-exempt but not repeat-exempt: while a session is e.g.
+rate-limited, every queued background task still wakes it, and each wake dies on
+the identical error within seconds — one ping per pending task. The first ping
+carries all the signal, so repeats of the same error are muted for
+`AGENTDONE_ERROR_COOLDOWN` (seconds, default 30 min; `0` disables the muting).
+A different error, or any error after a turn completes normally, notifies
+immediately.
 
 Notification text defaults to **English**; set `AGENTDONE_LANG=ja` for Japanese.
 `AGENTDONE_LANG` always wins; otherwise the POSIX locale is consulted in order
@@ -245,7 +254,9 @@ when `LC_ALL` / `LC_MESSAGES` are unset.
   residuals: output-token total, model, skill, the session title (stdin's
   `session_title` is unreliable, so it falls back to the transcript's ai-title),
   and the start-epoch correction for a task-woken turn (one resumed to report a
-  finished background task, with no fresh `UserPromptSubmit`).
+  finished background task — its synthetic `<task-notification>`
+  `UserPromptSubmit` is deliberately not saved, so the real turn's state
+  survives the wake).
 - The Claude Code hook payload types live in a small, self-contained package:
   [`pkg/cchooks`](pkg/cchooks) — Go types for **all 30 hook events**
   (reverse-engineered from the claude-code binary, last verified against

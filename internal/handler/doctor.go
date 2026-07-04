@@ -82,6 +82,9 @@ func Doctor(w io.Writer) error {
 	// negative) silently falls back to the default, so surface what is actually
 	// in force (and a "0s" tells the user every completion will notify).
 	fmt.Fprintf(w, "threshold: %ds\n", thresholdSeconds())
+	// Same rationale for the repeat-error window (a "0s" tells the user every
+	// failure will notify, cooldown disabled).
+	fmt.Fprintf(w, "error-cooldown: %ds\n", errorCooldownSeconds())
 	fmt.Fprintf(w, "hook schema verified against claude-code %s\n", cchooks.VerifiedClaudeCodeVersion)
 
 	if !healthy {
