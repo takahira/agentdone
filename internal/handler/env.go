@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// location renders the "場所" value: repo name (and branch) for a git working
-// tree, or the directory basename otherwise.
+// location renders the notification's location value: repo name (and branch)
+// for a git working tree, or the directory basename otherwise.
 func location(cwd string) string {
 	if cwd == "" {
 		return ""
