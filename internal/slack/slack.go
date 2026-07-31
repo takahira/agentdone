@@ -39,6 +39,11 @@ func Post(webhookURL, text string) (err error) {
 			fmt.Fprintf(os.Stderr, "agentdone: notification not delivered: %v\n", redact(err))
 		}
 	}()
+	// Mask inline credentials BEFORE escaping: the redaction patterns match on the
+	// raw characters, and escape() would turn a quote or angle bracket inside a
+	// value into an entity that the patterns no longer recognise. This is the single
+	// egress point, so every caller is covered (see redact.go).
+	text = redactSecrets(text)
 	text = escape(text)
 	if os.Getenv("AGENTDONE_STDOUT") == "1" {
 		fmt.Println(text)
