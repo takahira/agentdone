@@ -27,9 +27,16 @@ const mask = "<redacted>"
 var (
 	// KEY=VALUE / KEY: VALUE where the key looks credential-shaped. Group 1 keeps the
 	// key and delimiter. The value runs to whitespace, or to the closing quote when
-	// quoted, so `API_KEY="a b c"` does not leak its tail.
+	// quoted, so `API_KEY="a b c"` does not leak its tail. `;` is deliberately part
+	// of the value: `PASSWORD=abc;def` may be a real password containing a
+	// semicolon, and leaving `;def` behind publishes its tail. The cost is eager
+	// masking of text glued to the value (`TOKEN=x;echo hi` masks `x;echo`, a
+	// connection string loses the segment after the password) — per the trade-off
+	// above, readability loss beats a partial credential. `|` and `&` still stop
+	// the value: unquoted passwords containing them are rare, and space-less shell
+	// pipelines (`TOKEN=x|grep`) are not.
 	kvSecretRe = regexp.MustCompile(
-		`(?i)([A-Za-z0-9_.-]*(?:passwd|password|secret|token|api[_-]?key|access[_-]?key|auth|credential|private[_-]?key)[A-Za-z0-9_.-]*\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s;|&]+)`)
+		`(?i)([A-Za-z0-9_.-]*(?:passwd|password|secret|token|api[_-]?key|access[_-]?key|auth|credential|private[_-]?key)[A-Za-z0-9_.-]*\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s|&]+)`)
 
 	// Long flags: --password VALUE / --token=VALUE. Group 1 keeps the flag+delimiter.
 	flagSecretRe = regexp.MustCompile(
@@ -55,6 +62,12 @@ var (
 	// curl basic auth: -u user:pass / --user user:pass. Require the colon shape so a
 	// bare -u in another tool is not over-masked. Group 1 keeps the flag and user.
 	userPassRe = regexp.MustCompile(`(?i)((?:^|\s)(?:-u\s*|--user[=\s]\s*)[^\s:;|&]+:)([^\s;|&]+)`)
+
+	// Slack incoming-webhook URL -- this tool's own primary secret. The path after
+	// /services/ IS the credential (T…/B…/token), so mask it while keeping the host
+	// so the notification still says where it points. The character class excludes
+	// `?` and punctuation, so a trailing query string or sentence period survives.
+	slackWebhookRe = regexp.MustCompile(`(\bhooks\.slack\.com/services/)[A-Za-z0-9/_-]+`)
 
 	// Provider token shapes that are recognisable on their own.
 	tokenShapeRes = []*regexp.Regexp{
@@ -102,13 +115,18 @@ func keepPrefixSkipSchemes(re *regexp.Regexp, s string) string {
 	})
 }
 
-// redactSecrets masks inline credentials in text bound for Slack.
+// RedactSecrets masks inline credentials in text bound for Slack.
 //
 // Order matters: the PEM block goes first so nothing chews on its interior, then the
 // Authorization header before the generic key/value rule (otherwise "Authorization"
 // matches as a credential-shaped key and only the scheme word is masked, leaving the
 // credential after it), then the scoped flag rules, then the standalone token shapes.
-func redactSecrets(s string) string {
+//
+// Exported so the handler package can redact BEFORE it truncates a field: several
+// patterns carry minimum-length floors, and truncation can cut a token below its
+// floor so the leftover fragment slips past the redaction in Post. Running twice
+// is harmless — a mask never matches as a fresh credential.
+func RedactSecrets(s string) string {
 	if s == "" {
 		return s
 	}
@@ -121,6 +139,7 @@ func redactSecrets(s string) string {
 	s = keepPrefix(redisRe, s)
 	s = keepPrefix(userPassRe, s)
 	s = urlCredRe.ReplaceAllString(s, "${1}"+mask+"${3}")
+	s = keepPrefix(slackWebhookRe, s)
 	s = keepPrefix(bearerRe, s)
 	for _, re := range tokenShapeRes {
 		s = re.ReplaceAllString(s, mask)

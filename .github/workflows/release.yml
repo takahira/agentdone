@@ -29,8 +29,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       # Never sign and publish a build whose tests don't pass. CI runs on push
-      # too, but a tag can be cut from any commit — gate here, where it counts.
-      - run: go test ./...
+      # too, but a tag can be cut from any commit — gate here, where it counts,
+      # with -race so the release gate is as strict as ci.yml.
+      - run: go test -race ./...
       - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser

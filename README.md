@@ -344,7 +344,7 @@ permission / idle alerts on top.
 ## Running tests
 
 ```sh
-go test -race ./...   # 92 test functions; CI runs this with -race
+go test -race ./...   # 100+ test functions; CI and the release gate run this same command
 ```
 
 ---

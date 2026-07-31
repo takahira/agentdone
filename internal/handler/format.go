@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/takahira/agentdone/internal/slack"
 	"github.com/takahira/agentdone/internal/state"
 )
 
@@ -50,20 +51,28 @@ func oneLine(s string) string {
 
 // truncate shortens s to at most n runes (not bytes), so multi-byte Japanese
 // text is cut on character boundaries.
+//
+// Secrets are masked BEFORE the cut: slack.Post redacts again at egress, but
+// several of its patterns carry minimum-length floors, and cutting a token
+// mid-way can drop the remainder below a floor so a partial credential slips
+// through. Redacting the intact string first closes that gap; at worst the cut
+// leaves a partial mask, never a partial secret.
 func truncate(s string, n int) string {
-	r := []rune(s)
+	r := []rune(slack.RedactSecrets(s))
 	if len(r) <= n {
-		return s
+		return string(r)
 	}
 	return string(r[:n])
 }
 
 // truncateHead keeps the LAST n runes of s (the head is dropped). Used for
 // confirmation excerpts, where the question sits at the end of the message.
+// Redacts before the cut for the same reason as truncate: dropping a token's
+// head (its recognisable prefix) would leave an unmatchable tail in the clear.
 func truncateHead(s string, n int) string {
-	r := []rune(s)
+	r := []rune(slack.RedactSecrets(s))
 	if len(r) <= n {
-		return s
+		return string(r)
 	}
 	return "…" + string(r[len(r)-n:])
 }

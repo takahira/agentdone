@@ -1,6 +1,11 @@
 package handler
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/takahira/agentdone/internal/slack"
+)
 
 func TestTruncate(t *testing.T) {
 	// Short strings pass through; longer ones are cut on a RUNE boundary so
@@ -30,6 +35,33 @@ func TestTruncateHead(t *testing.T) {
 	}
 	if got := truncateHead("long summary then the question", 12); got != "…the question" {
 		t.Errorf("truncateHead = %q, want …the question", got)
+	}
+}
+
+// Truncation must not defeat redaction. slack.Post redacts at egress, but its
+// token patterns carry minimum-length floors — if truncate cuts a token first,
+// the remainder can fall below the floor and a partial credential reaches
+// Slack. These tests replay that exact pipeline: truncate, then the egress
+// redaction, and assert no token fragment survives.
+func TestTruncateRedactsBeforeCut(t *testing.T) {
+	token := "sk-ant-FAKE1234567890abcdefgh"
+	in := strings.Repeat("x", 50) + " " + token
+	// The cut at 60 runes would leave "sk-ant-FA" — too short for the
+	// sk-ant-/sk- shapes, so egress redaction alone would let it through.
+	out := slack.RedactSecrets(truncate(in, 60))
+	if strings.Contains(out, "sk-") {
+		t.Fatalf("token fragment survived truncation: %q", out)
+	}
+}
+
+func TestTruncateHeadRedactsBeforeCut(t *testing.T) {
+	token := "ghp_" + strings.Repeat("A", 30)
+	in := strings.Repeat("x", 100) + " " + token + " " + strings.Repeat("y", 120)
+	// Keeping the last 140 runes would drop the "ghp_" prefix, leaving a bare
+	// run of the token body that no shape pattern can recognise.
+	out := slack.RedactSecrets(truncateHead(in, 140))
+	if strings.Contains(out, "AAAAA") {
+		t.Fatalf("token tail survived head truncation: %q", out)
 	}
 }
 

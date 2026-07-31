@@ -18,6 +18,7 @@ func TestRedactSecrets(t *testing.T) {
 		{"env assignment", "deploy with GITHUB_TOKEN=ghp_FAKEabc123456789 to prod",
 			"ghp_FAKEabc123456789", []string{"GITHUB_TOKEN", "deploy", "prod"}},
 		{"lowercase password", "set db_password=Hunter2Passwd now", "Hunter2Passwd", []string{"db_password"}},
+		{"semicolon inside value", "run with PASSWORD=abc;def please", "abc;def", []string{"PASSWORD", "please"}},
 		{"quoted value with spaces", `export API_KEY="a b c secret"`, "a b c secret", []string{"API_KEY"}},
 		{"long flag", "tool --password sekret --port 1", "sekret", []string{"--password", "--port 1"}},
 		{"long flag equals", "tool --token=tok_live_99 run", "tok_live_99", []string{"--token", "run"}},
@@ -35,10 +36,16 @@ func TestRedactSecrets(t *testing.T) {
 		{"slack token", "token xoxb-1234567890-abcdefg set", "xoxb-1234567890-abcdefg", []string{"set"}},
 		{"anthropic key", "ANTHROPIC_API_KEY=sk-ant-FAKE1234567890abcd done",
 			"sk-ant-FAKE1234567890abcd", []string{"ANTHROPIC_API_KEY", "done"}},
+		{"slack webhook bare url", "https://hooks.slack.com/services/T0FAKE/B0FAKE/FAKEabcdef1234567890tokn",
+			"T0FAKE/B0FAKE/FAKEabcdef1234567890tokn", []string{"hooks.slack.com/services/"}},
+		{"slack webhook kv", "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T0FAKE/B0FAKE/FAKEtok123 done",
+			"FAKEtok123", []string{"SLACK_WEBHOOK_URL", "hooks.slack.com/services/", "done"}},
+		{"slack webhook in prose with query", "post it to https://hooks.slack.com/services/T0FAKE/B0FAKE/FAKEtoken99?x=1 please",
+			"FAKEtoken99", []string{"post it to", "hooks.slack.com/services/", "?x=1", "please"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := redactSecrets(c.in)
+			out := RedactSecrets(c.in)
 			if strings.Contains(out, c.secret) {
 				t.Fatalf("secret survived redaction\n in: %s\nout: %s", c.in, out)
 			}
@@ -64,7 +71,7 @@ func TestRedactSecretsLeavesProseAlone(t *testing.T) {
 		"The auth flow now returns 401 on expiry.",
 		"npm run build -- --mode production",
 	} {
-		if got := redactSecrets(s); got != s {
+		if got := RedactSecrets(s); got != s {
 			t.Errorf("prose was altered\n in: %s\nout: %s", s, got)
 		}
 	}
@@ -72,7 +79,7 @@ func TestRedactSecretsLeavesProseAlone(t *testing.T) {
 
 func TestRedactSecretsPEMBlock(t *testing.T) {
 	in := "here is the key\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234\nabcd\n-----END RSA PRIVATE KEY-----\nthanks"
-	out := redactSecrets(in)
+	out := RedactSecrets(in)
 	if strings.Contains(out, "MIIEowIBAAKCAQEA1234") {
 		t.Fatalf("PEM body survived: %s", out)
 	}
