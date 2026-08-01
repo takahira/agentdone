@@ -49,6 +49,20 @@ func errorCooldownSeconds() int64 {
 // UserPromptSubmit is deliberately not saved — see UserPromptSubmit). Leftover
 // state is reclaimed by the next real prompt's Save or the stale sweep.
 func StopFailure(in *cchooks.StopFailure) {
+	// Hold a per-session lock across check -> POST -> save. Two concurrent async
+	// StopFailure processes otherwise both see "no recent note" before either has
+	// written one and both notify -- in precisely the queued-wakeup storm the
+	// cooldown exists to collapse. The lock fails open (see WithFailureLock), so
+	// the re-check below is what collapses the race in that case.
+	// The cooldown re-check lives INSIDE fn, so it also covers the fail-open
+	// path: a loser that waited out lockWait re-reads the note the winner saved
+	// meanwhile and suppresses itself.
+	state.WithFailureLock(in.SessionID, func() {
+		stopFailureLocked(in)
+	})
+}
+
+func stopFailureLocked(in *cchooks.StopFailure) {
 	turn, _ := state.Peek(in.SessionID, in.PromptID)
 	errText := in.ErrorText()
 	if suppressed(in.SessionID, errText) {
@@ -68,9 +82,17 @@ func StopFailure(in *cchooks.StopFailure) {
 	if errText != "" {
 		fmt.Fprintf(&b, "%s", m.line(m.errLabel, truncate(oneLine(errText), maxFieldRunes)))
 	}
-	// Record the note only after a successful post: a delivery failure must not
-	// start a cooldown that would then mute the retry.
-	if slack.Post(config.WebhookURL(), strings.TrimRight(b.String(), "\n")) == nil {
+	// Record the note only after a real delivery.
+	//
+	// Two ways a post "succeeds" without anything being delivered:
+	//   - no webhook is configured at all -- slack.Post returns nil for an empty
+	//     URL. Recording a note then meant a user who hits an error, THEN
+	//     configures .webhook, gets silence for the next 30 minutes on the very
+	//     error they set it up for.
+	//   - AGENTDONE_STDOUT=1, where stdout IS the delivery. That one counts.
+	url := config.WebhookURL()
+	delivered := slack.Post(url, strings.TrimRight(b.String(), "\n")) == nil
+	if delivered && (url != "" || os.Getenv("AGENTDONE_STDOUT") == "1") {
 		_ = state.SaveFailure(in.SessionID, state.FailureNote{Epoch: state.Now(), Error: errText})
 	}
 }

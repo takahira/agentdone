@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/takahira/agentdone/internal/handler"
+	"github.com/takahira/agentdone/internal/slack"
 	"github.com/takahira/agentdone/pkg/cchooks"
 )
 
@@ -49,6 +50,16 @@ func newRootCmd() *cobra.Command {
 func dispatch(r io.Reader) error {
 	ev, err := cchooks.Parse(r)
 	if err != nil {
+		// Still swallowed -- a hook must never block Claude Code -- but no longer
+		// SILENT under debug. If a known field changes shape upstream, every
+		// notification stops and the documented "AGENTDONE_DEBUG explains why
+		// nothing was sent" contract was the one thing that could have told the
+		// user; instead it exited 0 with no output. The error text can quote the
+		// offending JSON, so it goes through the same redaction as any egress.
+		if os.Getenv("AGENTDONE_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "agentdone: could not parse hook payload (no notification sent): %s\n",
+				slack.RedactSecrets(err.Error()))
+		}
 		return nil
 	}
 	// Run the handler under recovery so a panic degrades to "no notification"

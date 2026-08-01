@@ -99,7 +99,7 @@ func Init() error {
 			fmt.Println("Sent a test notification to Slack.")
 		}
 	default:
-		fmt.Println("No webhook configured. Set SLACK_WEBHOOK_URL or write ~/.claude/hooks/.webhook (chmod 600).")
+		fmt.Printf("No webhook configured. Set SLACK_WEBHOOK_URL or write %s (chmod 600).\n", webhookHint())
 	}
 	return nil
 }
@@ -384,4 +384,15 @@ func removeWired(matchers []json.RawMessage) (kept []json.RawMessage, removed []
 		removed = append(removed, rm...)
 	}
 	return kept, removed
+}
+
+// webhookHint is the .webhook path to show in setup guidance: the file the
+// config package actually reads, so CLAUDE_CONFIG_DIR users are not sent to
+// ~/.claude/hooks/.webhook where nothing looks. Falls back to the literal
+// default only when the Claude directory cannot be resolved at all.
+func webhookHint() string {
+	if p := config.WebhookFilePath(); p != "" {
+		return p
+	}
+	return "~/.claude/hooks/.webhook"
 }

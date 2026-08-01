@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -27,8 +28,22 @@ func SetAllowAnyWebhookHostForTest(allow bool) (restore func()) {
 	return func() { allowAnyWebhookHost = prev }
 }
 
+// WebhookFilePath is the file rawWebhook actually reads, or "" if the Claude
+// directory cannot be resolved. Setup guidance MUST print this rather than a
+// hardcoded ~/.claude/hooks/.webhook: under CLAUDE_CONFIG_DIR the two differ, so
+// `init` and `doctor` were telling users to create the file somewhere nothing
+// reads it -- and then `doctor` repeated the same wrong remediation forever
+// while every notification stayed silent.
+func WebhookFilePath() string {
+	base, err := claudedir.Dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "hooks", ".webhook")
+}
+
 // rawWebhook returns the configured webhook string — the SLACK_WEBHOOK_URL
-// environment variable, or failing that ~/.claude/hooks/.webhook — or "" if
+// environment variable, or failing that the file at WebhookFilePath — or "" if
 // neither is set. The value is never compiled into the binary or committed.
 // A .webhook that EXISTS but cannot be read (permissions, I/O) is an error,
 // not "unset": reporting it as unset made a broken setup undiagnosable even
@@ -37,11 +52,10 @@ func rawWebhook() (string, error) {
 	if v := strings.TrimSpace(os.Getenv("SLACK_WEBHOOK_URL")); v != "" {
 		return v, nil
 	}
-	base, err := claudedir.Dir()
-	if err != nil {
+	p := WebhookFilePath()
+	if p == "" {
 		return "", nil
 	}
-	p := filepath.Join(base, "hooks", ".webhook")
 	b, err := os.ReadFile(p)
 	switch {
 	case os.IsNotExist(err):
@@ -51,6 +65,10 @@ func rawWebhook() (string, error) {
 	}
 	return strings.TrimSpace(string(b)), nil
 }
+
+// errInvalidWebhookURL is intentionally value-free: the only thing a caller may
+// print about an unparseable webhook is that it was unparseable.
+var errInvalidWebhookURL = errors.New("invalid Slack webhook URL")
 
 // ResolveWebhook returns the configured Slack webhook URL after checking it is an
 // https://hooks.slack.com/... endpoint. It returns ("", nil) when nothing is
@@ -67,7 +85,15 @@ func ResolveWebhook() (string, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("invalid Slack webhook URL: %w", err)
+		// Deliberately NOT wrapped: a url.Error's message embeds the whole raw
+		// URL, so wrapping it put the webhook token -- the secret itself -- into
+		// an error that `agentdone init` and `doctor` print to a terminal or a CI
+		// log. The parse failure tells the user nothing the generic message does
+		// not; under AGENTDONE_DEBUG they can still see the position.
+		if os.Getenv("AGENTDONE_DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "agentdone: webhook URL failed to parse (value withheld); check for spaces or control characters\n")
+		}
+		return "", errInvalidWebhookURL
 	}
 	// Compare the host case-insensitively and without any port: url.Host keeps
 	// both ("HOOKS.SLACK.COM", "hooks.slack.com:443"), so an exact == would

@@ -62,7 +62,7 @@ func Doctor(w io.Writer) error {
 		fmt.Fprintf(w, "webhook: ✗ %v\n", werr)
 		healthy = false
 	case url == "":
-		fmt.Fprintln(w, "webhook: ✗ not configured (set SLACK_WEBHOOK_URL or ~/.claude/hooks/.webhook)")
+		fmt.Fprintf(w, "webhook: ✗ not configured (set SLACK_WEBHOOK_URL or %s)\n", webhookHint())
 		healthy = false
 	default:
 		fmt.Fprintln(w, "webhook: ✓ configured (not contacted)")
