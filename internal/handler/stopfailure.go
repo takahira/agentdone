@@ -49,7 +49,7 @@ func errorCooldownSeconds() int64 {
 // UserPromptSubmit is deliberately not saved — see UserPromptSubmit). Leftover
 // state is reclaimed by the next real prompt's Save or the stale sweep.
 func StopFailure(in *cchooks.StopFailure) {
-	turn, _ := state.Peek(in.SessionID)
+	turn, _ := state.Peek(in.SessionID, in.PromptID)
 	errText := in.ErrorText()
 	if suppressed(in.SessionID, errText) {
 		return

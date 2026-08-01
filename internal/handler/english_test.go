@@ -25,10 +25,10 @@ func TestStopEnglishIntegration(t *testing.T) {
 	t.Setenv("SLACK_WEBHOOK_URL", srv.URL)
 
 	// A completed turn renders the English labels.
-	if err := state.Save("en1", state.Turn{StartEpoch: time.Now().UnixMilli() - 600_000, Prompt: "run the tests", SessionTitle: "Refactor"}); err != nil {
+	if err := state.Save("en1", "", state.Turn{StartEpoch: time.Now().UnixMilli() - 600_000, Prompt: "run the tests", SessionTitle: "Refactor"}); err != nil {
 		t.Fatal(err)
 	}
-	defer state.Delete("en1")
+	defer state.Delete("en1", "")
 	Stop(&cchooks.Stop{
 		Common:               cchooks.Common{HookEventName: cchooks.EventStop, SessionID: "en1"},
 		LastAssistantMessage: "Ran the tests and reported back.",
@@ -46,10 +46,10 @@ func TestStopEnglishIntegration(t *testing.T) {
 
 	// A plain-text English confirmation question (no '?', front-loaded phrase)
 	// must still surface through the real Stop path.
-	if err := state.Save("en2", state.Turn{StartEpoch: time.Now().UnixMilli(), Prompt: "p", SessionTitle: "T"}); err != nil {
+	if err := state.Save("en2", "", state.Turn{StartEpoch: time.Now().UnixMilli(), Prompt: "p", SessionTitle: "T"}); err != nil {
 		t.Fatal(err)
 	}
-	defer state.Delete("en2")
+	defer state.Delete("en2", "")
 	Stop(&cchooks.Stop{
 		Common:               cchooks.Common{HookEventName: cchooks.EventStop, SessionID: "en2"},
 		LastAssistantMessage: "I finished the first pass. Should I also update the docs now",

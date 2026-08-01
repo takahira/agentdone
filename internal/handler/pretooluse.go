@@ -20,7 +20,7 @@ func PreToolUse(in *cchooks.PreToolUse) {
 	if in.ToolName != "AskUserQuestion" && in.ToolName != "ExitPlanMode" {
 		return
 	}
-	turn, _ := state.Peek(in.SessionID)
+	turn, _ := state.Peek(in.SessionID, in.PromptID)
 	if turn.SessionTitle == "" {
 		turn.SessionTitle = transcript.LatestTitle(in.TranscriptPath)
 	}

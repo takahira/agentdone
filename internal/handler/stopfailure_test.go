@@ -23,7 +23,7 @@ func TestStopFailure(t *testing.T) {
 
 	// A short, errored turn (30s, under the 300s completion threshold) must STILL
 	// notify — errors matter regardless of duration — and consume the state.
-	if err := state.Save("f1", state.Turn{StartEpoch: time.Now().UnixMilli() - 30_000, Prompt: "build the thing", SessionTitle: "T"}); err != nil {
+	if err := state.Save("f1", "", state.Turn{StartEpoch: time.Now().UnixMilli() - 30_000, Prompt: "build the thing", SessionTitle: "T"}); err != nil {
 		t.Fatal(err)
 	}
 	StopFailure(&cchooks.StopFailure{
@@ -44,14 +44,14 @@ func TestStopFailure(t *testing.T) {
 	// An errored turn is often NOT the session's end: pending background tasks
 	// will wake later turns, and the eventual real completion still needs this
 	// turn's prompt / start time — so StopFailure must peek, not consume.
-	if _, ok := state.Peek("f1"); !ok {
+	if _, ok := state.Peek("f1", ""); !ok {
 		t.Error("turn state was consumed by StopFailure; the task-woken completion loses its prompt/start")
 	}
 
 	// a multi-line prompt must be flattened like every other field — left
 	// as-is, its second line would render as an independent notification line
 	// (a prompt containing "Error: ..." would even fake an error row).
-	if err := state.Save("f2", state.Turn{StartEpoch: time.Now().UnixMilli() - 30_000, Prompt: "line1\nError: FAKE\nline3", SessionTitle: "T"}); err != nil {
+	if err := state.Save("f2", "", state.Turn{StartEpoch: time.Now().UnixMilli() - 30_000, Prompt: "line1\nError: FAKE\nline3", SessionTitle: "T"}); err != nil {
 		t.Fatal(err)
 	}
 	StopFailure(&cchooks.StopFailure{

@@ -69,11 +69,11 @@ func Doctor(w io.Writer) error {
 	}
 
 	// Probe the state dir the same way a real turn would.
-	if serr := state.Save("doctor-probe", state.Turn{StartEpoch: 1}); serr != nil {
+	if serr := state.Save("doctor-probe", "", state.Turn{StartEpoch: 1}); serr != nil {
 		fmt.Fprintf(w, "state:   ✗ %v\n", serr)
 		healthy = false
 	} else {
-		state.Delete("doctor-probe")
+		state.Delete("doctor-probe", "")
 		fmt.Fprintln(w, "state:   ✓ writable")
 	}
 

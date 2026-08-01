@@ -17,7 +17,7 @@ func TestUserPromptSubmitIgnoresTaskNotificationWake(t *testing.T) {
 		Prompt:       "build 100 games",
 		SessionTitle: "T",
 	})
-	orig, ok := state.Peek("wake1")
+	orig, ok := state.Peek("wake1", "")
 	if !ok || orig.Prompt != "build 100 games" {
 		t.Fatalf("real prompt was not saved: %+v ok=%v", orig, ok)
 	}
@@ -27,7 +27,7 @@ func TestUserPromptSubmitIgnoresTaskNotificationWake(t *testing.T) {
 		Common: cchooks.Common{HookEventName: cchooks.EventUserPromptSubmit, SessionID: "wake1"},
 		Prompt: wake,
 	})
-	if got, ok := state.Peek("wake1"); !ok || got != orig {
+	if got, ok := state.Peek("wake1", ""); !ok || got != orig {
 		t.Errorf("synthetic wake overwrote the preserved turn state: got %+v ok=%v, want %+v", got, ok, orig)
 	}
 
@@ -38,7 +38,7 @@ func TestUserPromptSubmitIgnoresTaskNotificationWake(t *testing.T) {
 		Common: cchooks.Common{HookEventName: cchooks.EventUserPromptSubmit, SessionID: "wake2"},
 		Prompt: " <task-notification>\n<task-id>x</task-id>",
 	})
-	if got, ok := state.Peek("wake2"); ok {
+	if got, ok := state.Peek("wake2", ""); ok {
 		t.Errorf("synthetic wake fabricated turn state: %+v", got)
 	}
 }

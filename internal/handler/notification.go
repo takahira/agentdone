@@ -20,7 +20,7 @@ func Notification(in *cchooks.Notification) {
 	if in.NotificationType == "auth_success" {
 		return
 	}
-	turn, _ := state.Peek(in.SessionID)
+	turn, _ := state.Peek(in.SessionID, in.PromptID)
 	if turn.SessionTitle == "" {
 		turn.SessionTitle = transcript.LatestTitle(in.TranscriptPath)
 	}

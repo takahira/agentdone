@@ -10,26 +10,26 @@ import (
 func TestSavePeekDelete(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // keep test state out of the real ~/.claude
 	sid := "unit-save-peek-delete"
-	defer Delete(sid)
+	defer Delete(sid, "")
 	want := Turn{StartEpoch: 1234567890, Prompt: "やって", SessionTitle: "タイトル"}
-	if err := Save(sid, want); err != nil {
+	if err := Save(sid, "", want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	got, ok := Peek(sid)
+	got, ok := Peek(sid, "")
 	if !ok || got != want {
 		t.Fatalf("Peek = %+v, %v; want %+v, true", got, ok, want)
 	}
-	if _, ok := Peek(sid); !ok { // Peek must not consume
+	if _, ok := Peek(sid, ""); !ok { // Peek must not consume
 		t.Fatal("Peek consumed the state")
 	}
-	Delete(sid)
-	if _, ok := Peek(sid); ok {
+	Delete(sid, "")
+	if _, ok := Peek(sid, ""); ok {
 		t.Fatal("Delete did not remove the state")
 	}
 }
 
 func TestPeekMissing(t *testing.T) {
-	if _, ok := Peek("unit-definitely-missing"); ok {
+	if _, ok := Peek("unit-definitely-missing", ""); ok {
 		t.Fatal("Peek of missing state returned ok=true")
 	}
 }
@@ -53,10 +53,10 @@ func TestFailureNoteRoundtrip(t *testing.T) {
 	}
 	// The note and the turn state are separate files: saving/consuming one must
 	// not disturb the other.
-	if err := Save(sid, Turn{StartEpoch: 1}); err != nil {
+	if err := Save(sid, "", Turn{StartEpoch: 1}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	Delete(sid)
+	Delete(sid, "")
 	if _, ok := PeekFailure(sid); !ok {
 		t.Fatal("deleting turn state removed the failure note")
 	}
@@ -92,10 +92,24 @@ func TestPathStaysInOurDir(t *testing.T) {
 	if want := filepath.Join(home, ".claude", "hooks", "state"); base != want {
 		t.Errorf("state dir = %q, want %q", base, want)
 	}
-	for _, id := range []string{"../../etc/passwd", "a/b", "....//", "/abs/path"} {
-		if got := filepath.Dir(path(id)); got != base {
-			t.Errorf("path(%q) escaped the state dir: dir=%q want=%q", id, got, base)
+	// Both components are attacker-influenced payload fields, so neither may
+	// escape the state dir -- and a crafted pair must not be able to name
+	// another pair's file either (the '.' separator is stripped by safeID, so
+	// it cannot appear inside a sanitised component).
+	nasty := []string{"../../etc/passwd", "a/b", "....//", "/abs/path"}
+	for _, id := range nasty {
+		if got := filepath.Dir(path(id, "p")); got != base {
+			t.Errorf("path(session=%q) escaped the state dir: dir=%q want=%q", id, got, base)
 		}
+		if got := filepath.Dir(path("s", id)); got != base {
+			t.Errorf("path(prompt=%q) escaped the state dir: dir=%q want=%q", id, got, base)
+		}
+	}
+	if path("a-b", "c") == path("a", "b-c") {
+		t.Error("distinct (session, prompt) pairs collided on one state file")
+	}
+	if path("s", "stopfail") == failurePath("s") {
+		t.Error("a crafted prompt id collided with the failure-note file")
 	}
 }
 
@@ -105,15 +119,15 @@ func TestDeleteIf(t *testing.T) {
 	sid := "unit-delete-if"
 	older := Turn{StartEpoch: 1, Prompt: "old"}
 	newer := Turn{StartEpoch: 2, Prompt: "new"}
-	if err := Save(sid, newer); err != nil {
+	if err := Save(sid, "", newer); err != nil {
 		t.Fatal(err)
 	}
-	DeleteIf(sid, older) // the stale turn's delete must be a no-op
-	if got, ok := Peek(sid); !ok || got != newer {
+	DeleteIf(sid, "", older) // the stale turn's delete must be a no-op
+	if got, ok := Peek(sid, ""); !ok || got != newer {
 		t.Fatalf("DeleteIf removed a newer turn's state (got %+v, %v)", got, ok)
 	}
-	DeleteIf(sid, newer)
-	if _, ok := Peek(sid); ok {
+	DeleteIf(sid, "", newer)
+	if _, ok := Peek(sid, ""); ok {
 		t.Fatal("DeleteIf with the matching turn did not delete")
 	}
 }
@@ -132,14 +146,14 @@ func TestSaveRejectsSymlinkStateDir(t *testing.T) {
 	if err := os.Symlink(elsewhere, filepath.Join(home, ".claude", "hooks", "state")); err != nil {
 		t.Skipf("symlink not supported here: %v", err)
 	}
-	if err := Save("squat", Turn{StartEpoch: 1}); err == nil {
+	if err := Save("squat", "", Turn{StartEpoch: 1}); err == nil {
 		t.Fatal("Save through a symlinked state dir succeeded, want refusal")
 	}
 }
 
 func TestClearRemovesStateDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if err := Save("clear-me", Turn{StartEpoch: 1}); err != nil {
+	if err := Save("clear-me", "", Turn{StartEpoch: 1}); err != nil {
 		t.Fatal(err)
 	}
 	Clear()
@@ -290,11 +304,11 @@ func TestSweepStaleKeepsFreshRewrite(t *testing.T) {
 	const sid = "race-keep-fresh"
 	for i := 0; i < 2000; i++ {
 		want := Turn{StartEpoch: int64(i + 1), Prompt: "p"}
-		if err := Save(sid, want); err != nil {
+		if err := Save(sid, "", want); err != nil {
 			close(done)
 			t.Fatalf("Save #%d: %v", i, err)
 		}
-		if got, ok := Peek(sid); !ok || got != want {
+		if got, ok := Peek(sid, ""); !ok || got != want {
 			close(done)
 			t.Fatalf("fresh state lost to sweep at #%d: got %+v ok=%v", i, got, ok)
 		}
@@ -305,15 +319,73 @@ func TestSweepStaleKeepsFreshRewrite(t *testing.T) {
 func TestSaveOverwriteParses(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	sid := "unit-overwrite"
-	defer Delete(sid)
-	if err := Save(sid, Turn{StartEpoch: 1, Prompt: "p"}); err != nil {
+	defer Delete(sid, "")
+	if err := Save(sid, "", Turn{StartEpoch: 1, Prompt: "p"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Save(sid, Turn{StartEpoch: 2, Prompt: "q"}); err != nil {
+	if err := Save(sid, "", Turn{StartEpoch: 2, Prompt: "q"}); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := Peek(sid)
+	got, ok := Peek(sid, "")
 	if !ok || got.StartEpoch != 2 || got.Prompt != "q" {
 		t.Fatalf("Peek after overwrite = %+v, %v", got, ok)
+	}
+}
+
+// TestOverlappingTurnsDoNotShareState is the reason turn state is keyed by
+// prompt as well as session. The Stop hook is wired async, so a slow Stop for
+// turn A can run AFTER turn B's UserPromptSubmit has saved. With session-only
+// keys, A read B's state, computed a near-zero elapsed time (so A sent nothing)
+// and then deleted B's state on the way out -- so B went silent too. Both turns
+// lost their notification, which is this tool's worst failure mode.
+func TestOverlappingTurnsDoNotShareState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	Clear()
+	const sid = "s-overlap"
+	turnA := Turn{StartEpoch: 1_000, Prompt: "A"}
+	turnB := Turn{StartEpoch: 9_000, Prompt: "B"}
+
+	if err := Save(sid, "prompt-a", turnA); err != nil {
+		t.Fatal(err)
+	}
+	// Turn B starts while A's async Stop is still in flight.
+	if err := Save(sid, "prompt-b", turnB); err != nil {
+		t.Fatal(err)
+	}
+
+	gotA, ok := Peek(sid, "prompt-a")
+	if !ok || gotA != turnA {
+		t.Fatalf("turn A read %+v (ok=%v), want its own state %+v", gotA, ok, turnA)
+	}
+
+	// A's late Stop consumes ONLY A.
+	DeleteIf(sid, "prompt-a", gotA)
+	if _, ok := Peek(sid, "prompt-a"); ok {
+		t.Error("turn A's state survived its own consuming Stop")
+	}
+	gotB, ok := Peek(sid, "prompt-b")
+	if !ok || gotB != turnB {
+		t.Fatalf("turn B lost its state to turn A's Stop: %+v (ok=%v)", gotB, ok)
+	}
+}
+
+// TestPeekFallsBackToLegacyStateOnce covers the upgrade window: state written by
+// a pre-prompt_id binary must still be found, and must not be resurrected after
+// the turn is consumed.
+func TestPeekFallsBackToLegacyStateOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	Clear()
+	const sid = "s-upgrade"
+	old := Turn{StartEpoch: 42, Prompt: "written by the old binary"}
+	if err := Save(sid, "", old); err != nil { // legacy, session-scoped
+		t.Fatal(err)
+	}
+	got, ok := Peek(sid, "prompt-new")
+	if !ok || got != old {
+		t.Fatalf("legacy state not found: %+v (ok=%v)", got, ok)
+	}
+	Delete(sid, "prompt-new")
+	if _, ok := Peek(sid, "prompt-new"); ok {
+		t.Error("legacy state resurrected after the turn was consumed")
 	}
 }

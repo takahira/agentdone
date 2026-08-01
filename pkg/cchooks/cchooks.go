@@ -36,8 +36,15 @@ type Event interface {
 
 // Common holds the fields present on (essentially) every hook event.
 type Common struct {
-	HookEventName  string  `json:"hook_event_name"`
-	SessionID      string  `json:"session_id"`
+	HookEventName string `json:"hook_event_name"`
+	SessionID     string `json:"session_id"`
+	// PromptID identifies the individual prompt/turn within a session, where
+	// SessionID identifies the whole conversation. Verified present on a real
+	// PreToolUse payload (2026-08-01) alongside session_id. Consumers that keep
+	// per-turn state want this: session_id alone cannot tell two overlapping
+	// turns apart, which is how an async hook for one turn can read state a
+	// newer turn just wrote.
+	PromptID       string  `json:"prompt_id,omitempty"`
 	TranscriptPath string  `json:"transcript_path"`
 	Cwd            string  `json:"cwd"`
 	PermissionMode string  `json:"permission_mode,omitempty"`

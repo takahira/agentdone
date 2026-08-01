@@ -28,7 +28,7 @@ func TestStop(t *testing.T) {
 	t.Setenv("SLACK_WEBHOOK_URL", srv.URL)
 
 	seed := func(sid string, start int64) {
-		if err := state.Save(sid, state.Turn{StartEpoch: start, Prompt: "p", SessionTitle: "title"}); err != nil {
+		if err := state.Save(sid, "", state.Turn{StartEpoch: start, Prompt: "p", SessionTitle: "title"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -59,7 +59,7 @@ func TestStop(t *testing.T) {
 		if len(bodies) != 0 {
 			t.Fatalf("expected no notification while a wakeup is armed, got %d", len(bodies))
 		}
-		if _, ok := state.Peek("s-cron"); !ok {
+		if _, ok := state.Peek("s-cron", ""); !ok {
 			t.Fatal("withheld Stop must not consume the turn state")
 		}
 	})
@@ -271,7 +271,7 @@ func TestStopClockRewind(t *testing.T) {
 	t.Setenv("SLACK_WEBHOOK_URL", srv.URL)
 
 	future := time.Now().UnixMilli() + 600_000 // start 10 min in the "future"
-	if err := state.Save("rw", state.Turn{StartEpoch: future, Prompt: "p", SessionTitle: "t"}); err != nil {
+	if err := state.Save("rw", "", state.Turn{StartEpoch: future, Prompt: "p", SessionTitle: "t"}); err != nil {
 		t.Fatal(err)
 	}
 	Stop(&cchooks.Stop{
@@ -283,7 +283,7 @@ func TestStopClockRewind(t *testing.T) {
 	}
 
 	t.Setenv("AGENTDONE_THRESHOLD", "0")
-	if err := state.Save("rw0", state.Turn{StartEpoch: future, Prompt: "p", SessionTitle: "t"}); err != nil {
+	if err := state.Save("rw0", "", state.Turn{StartEpoch: future, Prompt: "p", SessionTitle: "t"}); err != nil {
 		t.Fatal(err)
 	}
 	Stop(&cchooks.Stop{

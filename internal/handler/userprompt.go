@@ -35,7 +35,7 @@ func UserPromptSubmit(in *cchooks.UserPromptSubmit) {
 	// failure mode, so it must be diagnosable: log under AGENTDONE_DEBUG like the
 	// other failure paths (panic, delivery, invalid webhook). state.ensureDir
 	// rejects a squatted/broken state dir, which is exactly what surfaces here.
-	if err := state.Save(in.SessionID, state.Turn{
+	if err := state.Save(in.SessionID, in.PromptID, state.Turn{
 		StartEpoch:   state.Now(),
 		Prompt:       in.Prompt,
 		SessionTitle: in.SessionTitle,

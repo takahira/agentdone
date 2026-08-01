@@ -45,7 +45,7 @@ func Stop(in *cchooks.Stop) {
 	// so the later completion (the turn the task wakes — whose synthetic
 	// "<task-notification>" UserPromptSubmit is deliberately not saved, see
 	// UserPromptSubmit) can still report the prompt / start time.
-	turn, _ := state.Peek(in.SessionID)
+	turn, _ := state.Peek(in.SessionID, in.PromptID)
 	isAsk := looksLikeQuestion(in.LastAssistantMessage)
 
 	// Withhold the "done" ping while waiting on background work; the real
@@ -66,7 +66,7 @@ func Stop(in *cchooks.Stop) {
 	// saved. A truly-over turn also closes any failure episode: the next error —
 	// even an identical one — is news again, so clear the StopFailure cooldown.
 	if !waiting {
-		state.DeleteIf(in.SessionID, turn)
+		state.DeleteIf(in.SessionID, in.PromptID, turn)
 		state.ClearFailure(in.SessionID)
 	}
 

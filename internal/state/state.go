@@ -74,7 +74,34 @@ func ensureDir() error {
 	return nil
 }
 
-func path(sessionID string) string { return filepath.Join(dir(), safeID(sessionID)+".json") }
+// path names the turn-state file. Turn state is PER TURN, so it is keyed by
+// session AND prompt: session_id alone cannot tell two overlapping turns apart,
+// and the Stop hook runs async. A slow Stop for turn A would otherwise read the
+// state turn B's UserPromptSubmit had just written, compute a near-zero elapsed
+// time, and delete B's state on the way out -- silencing BOTH turns.
+//
+// Verified on real payloads (2026-08-01): the Stop for a turn carries the same
+// prompt_id as the UserPromptSubmit that started it, which is what makes this
+// key work.
+//
+// The separator is '.', which safeID strips from its input, so neither part can
+// contain it and no crafted pair of ids can collide with another pair. The
+// ".turn" tag keeps these clear of failurePath's ".stopfail.json".
+func path(sessionID, promptID string) string {
+	if promptID == "" {
+		// No prompt_id (an older Claude Code, or an event that omits it): fall
+		// back to the historical session-scoped name so behaviour is unchanged
+		// rather than broken.
+		return legacyPath(sessionID)
+	}
+	return filepath.Join(dir(), safeID(sessionID)+"."+safeID(promptID)+".turn.json")
+}
+
+// legacyPath is the pre-prompt_id session-scoped name, still read by Peek so an
+// upgrade mid-session does not strand state written by the previous binary.
+func legacyPath(sessionID string) string {
+	return filepath.Join(dir(), safeID(sessionID)+".json")
+}
 
 // safeID strips everything but [A-Za-z0-9_-] from the session id before it is
 // used in a state-file path. session_id is normally a UUID; this keeps a crafted
@@ -96,12 +123,12 @@ func safeID(s string) string {
 
 // Save writes the turn state for a session and opportunistically sweeps stale
 // state files left by sessions that never reached a consuming Stop.
-func Save(sessionID string, t Turn) error {
+func Save(sessionID, promptID string, t Turn) error {
 	if err := ensureDir(); err != nil {
 		return err
 	}
 	sweepStale()
-	return writeJSON(path(sessionID), t)
+	return writeJSON(path(sessionID, promptID), t)
 }
 
 // writeJSON marshals v and atomically replaces p with it: a concurrent reader
@@ -180,8 +207,17 @@ func shouldRemoveStale(info os.FileInfo, statErr error, cutoff time.Time) bool {
 // consuming matters for both mid-turn hooks (Notification, PreToolUse) and a
 // withheld Stop: a Stop suppressed because background work is still running must
 // leave the state for the later completion (the woken turn) to label itself.
-func Peek(sessionID string) (t Turn, ok bool) {
-	b, err := os.ReadFile(path(sessionID))
+func Peek(sessionID, promptID string) (t Turn, ok bool) {
+	p := path(sessionID, promptID)
+	b, err := os.ReadFile(p)
+	if err != nil && os.IsNotExist(err) && promptID != "" {
+		// Upgrade window only: state written by a pre-prompt_id binary earlier in
+		// this same session still lives under the session-scoped name. Reading it
+		// is strictly better than losing the turn; new writes always use the
+		// prompt-scoped name, so this path dies out on its own.
+		p = legacyPath(sessionID)
+		b, err = os.ReadFile(p)
+	}
 	if err != nil {
 		// A missing file is the common, expected case (a turn with no preceding
 		// UserPromptSubmit) and stays silent. Any OTHER read error (permission,
@@ -208,7 +244,14 @@ func Peek(sessionID string) (t Turn, ok bool) {
 // Delete removes the stored turn state for a session, if any. Called once the
 // turn is genuinely ending (a Stop that actually evaluates/sends), not on a Stop
 // withheld for in-flight background work.
-func Delete(sessionID string) { _ = os.Remove(path(sessionID)) }
+func Delete(sessionID, promptID string) {
+	_ = os.Remove(path(sessionID, promptID))
+	if promptID != "" {
+		// Also clear any legacy session-scoped state Peek may have just used, so
+		// the upgrade-window fallback cannot resurrect a consumed turn.
+		_ = os.Remove(legacyPath(sessionID))
+	}
+}
 
 // DeleteIf removes the stored turn state only while it still holds expect — a
 // compare-and-delete. The Stop hook runs async, so by the time a slow Stop gets
@@ -216,10 +259,10 @@ func Delete(sessionID string) { _ = os.Remove(path(sessionID)) }
 // deleting blindly would strip that turn of its prompt/start and silence its
 // completion. (Read-compare-remove, not atomic: the remaining window is the
 // few µs between the read and the remove, vs. the hook's whole runtime.)
-func DeleteIf(sessionID string, expect Turn) {
-	cur, ok := Peek(sessionID)
+func DeleteIf(sessionID, promptID string, expect Turn) {
+	cur, ok := Peek(sessionID, promptID)
 	if ok && cur == expect {
-		Delete(sessionID)
+		Delete(sessionID, promptID)
 	}
 }
 

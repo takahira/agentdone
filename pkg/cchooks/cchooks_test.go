@@ -196,3 +196,46 @@ func typeName(ev Event) string {
 		return "?"
 	}
 }
+
+// realPreToolUsePayload is an actual PreToolUse hook stdin captured on
+// 2026-08-01. It is kept verbatim because prompt_id was missing from this
+// package until that capture proved it ships on real events.
+const realPreToolUsePayload = `{
+  "hook_event_name": "PreToolUse",
+  "session_id": "9316ad56-35ea-49ae-850c-da6a73412953",
+  "prompt_id": "bfd2cc42-ca1d-4e3e-b79e-ef7a22cc115f",
+  "transcript_path": "/tmp/t.jsonl",
+  "cwd": "/tmp",
+  "permission_mode": "auto",
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_x",
+  "tool_input": {"command": "true"}
+}`
+
+func TestDecodeCarriesPromptID(t *testing.T) {
+	ev, err := Decode([]byte(realPreToolUsePayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := ev.(*PreToolUse)
+	if !ok {
+		t.Fatalf("decoded to %T, want *PreToolUse", ev)
+	}
+	if p.PromptID != "bfd2cc42-ca1d-4e3e-b79e-ef7a22cc115f" {
+		t.Errorf("PromptID = %q, want the captured value", p.PromptID)
+	}
+	if p.SessionID == p.PromptID {
+		t.Error("prompt_id must be distinct from session_id")
+	}
+}
+
+func TestPromptIDAbsentIsEmptyNotAnError(t *testing.T) {
+	// Older payloads (and events that may not carry it) must still decode.
+	ev, err := Decode([]byte(realStopPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ev.(*Stop).PromptID; got != "" {
+		t.Errorf("PromptID = %q, want empty when the field is absent", got)
+	}
+}
