@@ -50,7 +50,10 @@ func Stop(in *cchooks.Stop) {
 
 	// Withhold the "done" ping while waiting on background work; the real
 	// completion fires on the turn that the task wakes.
-	waiting := suppress.WaitingOnBackground(in.BackgroundTasks)
+	// A scheduled wakeup (session_crons) parks the session exactly like an
+	// in-flight background task does, so it must gate the ping the same way.
+	waiting := suppress.WaitingOnBackground(in.BackgroundTasks) ||
+		suppress.WaitingOnSchedule(in.SessionCrons)
 	if waiting && !isAsk {
 		return
 	}

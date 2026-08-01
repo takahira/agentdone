@@ -25,3 +25,20 @@ func WaitingOnBackground(tasks []cchooks.BackgroundTask) bool {
 	}
 	return false
 }
+
+// WaitingOnSchedule reports whether the turn ended with a scheduled wakeup still
+// armed: a /loop, CronCreate or ScheduleWakeup entry in session_crons. Like an
+// in-flight background task this makes the Stop a PAUSE rather than a
+// completion — Claude will be re-invoked when the schedule fires.
+//
+// This is the sibling of background_tasks in the same payload, and missing it
+// caused two distinct wrong outcomes: a premature "done" ping for a session that
+// was merely parked, and — because a non-waiting Stop consumes the saved turn
+// state — the loss of the start time the REAL completion needed later.
+//
+// A cron whose next firing is far away still counts as waiting. The alternative
+// (guessing a horizon) would silently drop the notification for exactly the
+// long-running loops this tool exists to watch.
+func WaitingOnSchedule(crons []cchooks.SessionCron) bool {
+	return len(crons) > 0
+}

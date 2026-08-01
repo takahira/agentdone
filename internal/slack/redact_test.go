@@ -42,6 +42,16 @@ func TestRedactSecrets(t *testing.T) {
 			"FAKEtok123", []string{"SLACK_WEBHOOK_URL", "hooks.slack.com/services/", "done"}},
 		{"slack webhook in prose with query", "post it to https://hooks.slack.com/services/T0FAKE/B0FAKE/FAKEtoken99?x=1 please",
 			"FAKEtoken99", []string{"post it to", "hooks.slack.com/services/", "?x=1", "please"}},
+		// ResolveWebhook compares the host with EqualFold and drops the port via
+		// Hostname(), so both of these are ACCEPTED as the configured webhook. The
+		// masker used to be case-sensitive and to require /services/ right after
+		// .com, so an accepted webhook was one it could not mask.
+		{"slack webhook uppercase host", "https://HOOKS.SLACK.COM/services/T0FAKE/B0FAKE/FAKEupper123",
+			"FAKEupper123", []string{"services/"}},
+		{"slack webhook explicit port", "https://hooks.slack.com:443/services/T0FAKE/B0FAKE/FAKEport456",
+			"FAKEport456", []string{"services/"}},
+		{"slack webhook mixed case and port", "see HTTPS://Hooks.Slack.Com:443/services/T0FAKE/B0FAKE/FAKEmix789 now",
+			"FAKEmix789", []string{"see", "now"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

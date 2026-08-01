@@ -28,3 +28,25 @@ func TestWaitingOnBackground(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitingOnSchedule(t *testing.T) {
+	cases := []struct {
+		name  string
+		crons []cchooks.SessionCron
+		want  bool
+	}{
+		{"empty", nil, false},
+		{"empty slice", []cchooks.SessionCron{}, false},
+		// A /loop or ScheduleWakeup parks the session: the turn ended, but Claude
+		// will be re-invoked. Reporting "done" here is premature AND makes the
+		// caller consume the saved turn state the real completion still needs.
+		{"one-shot wakeup", []cchooks.SessionCron{{ID: "w1", Recurring: false}}, true},
+		{"recurring loop", []cchooks.SessionCron{{ID: "c1", Schedule: "*/5 * * * *", Recurring: true}}, true},
+		{"several", []cchooks.SessionCron{{ID: "a"}, {ID: "b"}}, true},
+	}
+	for _, c := range cases {
+		if got := WaitingOnSchedule(c.crons); got != c.want {
+			t.Errorf("%s: WaitingOnSchedule = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

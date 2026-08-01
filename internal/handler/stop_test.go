@@ -45,6 +45,25 @@ func TestStop(t *testing.T) {
 		}
 	})
 
+	t.Run("suppressed while a scheduled wakeup is armed", func(t *testing.T) {
+		// session_crons parks the session exactly like a running background task:
+		// the turn ended, but a /loop or ScheduleWakeup will re-invoke Claude. This
+		// used to post a premature "done" AND consume the saved turn state, so the
+		// real completion later lost its start time.
+		seed("s-cron", time.Now().UnixMilli()-600_000)
+		Stop(&cchooks.Stop{
+			Common:               cchooks.Common{HookEventName: cchooks.EventStop, SessionID: "s-cron"},
+			LastAssistantMessage: "次の巡回まで待機します。",
+			SessionCrons:         []cchooks.SessionCron{{ID: "w1", Recurring: false}},
+		})
+		if len(bodies) != 0 {
+			t.Fatalf("expected no notification while a wakeup is armed, got %d", len(bodies))
+		}
+		if _, ok := state.Peek("s-cron"); !ok {
+			t.Fatal("withheld Stop must not consume the turn state")
+		}
+	})
+
 	t.Run("sends completion when nothing is running", func(t *testing.T) {
 		seed("s2", time.Now().UnixMilli()-600_000)
 		Stop(&cchooks.Stop{

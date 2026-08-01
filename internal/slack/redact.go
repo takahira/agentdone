@@ -67,7 +67,14 @@ var (
 	// /services/ IS the credential (T…/B…/token), so mask it while keeping the host
 	// so the notification still says where it points. The character class excludes
 	// `?` and punctuation, so a trailing query string or sentence period survives.
-	slackWebhookRe = regexp.MustCompile(`(\bhooks\.slack\.com/services/)[A-Za-z0-9/_-]+`)
+	//
+	// Must stay at least as permissive as what config.ResolveWebhook ACCEPTS, or a
+	// webhook the tool happily uses is one it cannot mask. That check compares
+	// strings.EqualFold(u.Hostname(), …), so the host is case-insensitive and
+	// Hostname() drops any port -- hence (?i) and the optional `:port` here.
+	// Without them `https://HOOKS.SLACK.COM/services/T/B/tok` and
+	// `https://hooks.slack.com:443/services/T/B/tok` reached Slack in the clear.
+	slackWebhookRe = regexp.MustCompile(`(?i)(\bhooks\.slack\.com(?::\d+)?/services/)[A-Za-z0-9/_-]+`)
 
 	// Provider token shapes that are recognisable on their own.
 	tokenShapeRes = []*regexp.Regexp{
