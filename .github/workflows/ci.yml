@@ -45,6 +45,15 @@ jobs:
       # change that forgets demo.sh surfaces here, not as a silently broken
       # README walkthrough. The grep asserts the context-rich step-2 output.
       - run: sh demo/demo.sh | grep -q "Refactor the parser"
+      # install.sh is the `curl | sh` entry point advertised in the README, but
+      # it had zero CI coverage: a regression in tar member naming or in the
+      # releases/latest redirect handling would break the released one-liner
+      # unnoticed. Syntax-check it and lint it. Deterministic, so linux only.
+      - name: install.sh syntax + shellcheck
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sh -n install.sh
+          shellcheck --shell=sh install.sh
 
   # Compile every release target so platform-specific breakage (Windows path
   # handling, etc.) is caught in CI — the release ships these but the test job

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -96,13 +97,41 @@ type BackgroundTask struct {
 // mistake an unrecognized or new in-flight status (queued, starting, …) for
 // "done" and leak the premature completion ping this tool exists to withhold.
 func (t BackgroundTask) Running() bool {
-	switch strings.ToLower(strings.TrimSpace(t.Status)) {
+	status := strings.ToLower(strings.TrimSpace(t.Status))
+	switch status {
 	case "completed", "complete", "done", "succeeded", "success", "finished",
 		"failed", "failure", "error", "errored", "cancelled", "canceled",
 		"stopped", "killed", "timeout", "timed_out", "aborted":
 		return false
 	}
+	// The blacklist is the safe direction, but it has a silent failure mode: if
+	// the CLI ships a NEW terminal status (e.g. "skipped", "interrupted") the
+	// task looks in-flight forever and completion pings for that session are
+	// withheld with no trace. Silence is this tool's worst failure mode, so make
+	// an unrecognized status diagnosable instead of invisible.
+	if !knownRunningStatuses[status] && os.Getenv("AGENTDONE_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr,
+			"[agentdone] unrecognized background task status %q (task %q); treating as running — "+
+				"if this is a terminal status, notifications for this session stay muted\n",
+			t.Status, t.ID)
+	}
 	return true
+}
+
+// knownRunningStatuses are the in-flight statuses observed from the hook. A
+// status in neither this set nor Running's terminal switch is unrecognized and
+// gets a debug warning; behaviour is unchanged (still treated as running).
+var knownRunningStatuses = map[string]bool{
+	"running":     true,
+	"in_progress": true,
+	"inprogress":  true,
+	"pending":     true,
+	"queued":      true,
+	"starting":    true,
+	"started":     true,
+	"active":      true,
+	"waiting":     true,
+	"":            true, // an absent status is the documented "assume in flight" case
 }
 
 // SessionCron is one entry of the Stop/SubagentStop session_crons array:
