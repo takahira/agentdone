@@ -25,9 +25,10 @@ import (
 const mask = "<redacted>"
 
 var (
-	// KEY=VALUE / KEY: VALUE where the key looks credential-shaped. Group 1 keeps the
-	// key and delimiter. The value runs to whitespace, or to the closing quote when
-	// quoted, so `API_KEY="a b c"` does not leak its tail. `;` is deliberately part
+	// KEY=VALUE / KEY: VALUE where the key looks credential-shaped. Optional JSON or
+	// YAML quotes around the key are included in group 1, which keeps the key and
+	// delimiter. The value runs to whitespace, or to the closing quote when quoted,
+	// so `API_KEY="a b c"` does not leak its tail. `;` is deliberately part
 	// of the value: `PASSWORD=abc;def` may be a real password containing a
 	// semicolon, and leaving `;def` behind publishes its tail. The cost is eager
 	// masking of text glued to the value (`TOKEN=x;echo hi` masks `x;echo`, a
@@ -36,7 +37,7 @@ var (
 	// the value: unquoted passwords containing them are rare, and space-less shell
 	// pipelines (`TOKEN=x|grep`) are not.
 	kvSecretRe = regexp.MustCompile(
-		`(?i)([A-Za-z0-9_.-]*(?:passwd|password|secret|token|api[_-]?key|access[_-]?key|auth|credential|private[_-]?key)[A-Za-z0-9_.-]*\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s|&]+)`)
+		`(?i)(["']?[A-Za-z0-9_.-]*(?:passwd|password|secret|token|api[_-]?key|access[_-]?key|auth|credential|private[_-]?key)[A-Za-z0-9_.-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s|&]+)`)
 
 	// Long flags: --password VALUE / --token=VALUE. Group 1 keeps the flag+delimiter.
 	flagSecretRe = regexp.MustCompile(

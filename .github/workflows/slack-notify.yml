@@ -1,7 +1,7 @@
 name: Slack on failure
 
 # Optional: pings Slack only when a CI/Release run ends in failure. It no-ops
-# unless the repo has a SLACK_WEBHOOK_URL secret, so a fork inherits nothing.
+# unless the repo has a SLACK_WEBHOOK_URL secret.
 # (workflow_run + if(conclusion == failure) is what scopes it to failures only.)
 on:
   workflow_run:
@@ -13,7 +13,8 @@ permissions:
 
 jobs:
   notify:
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    # workflow_run can access repository secrets, so fork-originated runs must not notify.
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
       - name: Notify Slack

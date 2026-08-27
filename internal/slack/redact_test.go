@@ -71,6 +71,28 @@ func TestRedactSecrets(t *testing.T) {
 	}
 }
 
+func TestRedactSecretsQuotedKeys(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"JSON with space after colon", `{"api_key": "FAKE-json-value"}`, `{"api_key": <redacted>}`},
+		{"JSON without space after colon", `{"db_password":"FAKE-json-password"}`, `{"db_password":<redacted>}`},
+		{"single-quoted key", `{'access_token': 'T0FAKE-single-value'}`, `{'access_token': <redacted>}`},
+		{"YAML quoted value", `api_key: "T0FAKE-yaml-value"`, `api_key: <redacted>`},
+		{"two credential keys", `{"api_key":"FAKE-first","note":"keep me","db_password":"FAKE-second"}`,
+			`{"api_key":<redacted>,"note":"keep me","db_password":<redacted>}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := RedactSecrets(c.in); got != c.want {
+				t.Errorf("unexpected redaction\n in: %s\ngot: %s\nwant: %s", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 // Ordinary text must survive untouched, or every notification becomes unreadable.
 func TestRedactSecretsLeavesProseAlone(t *testing.T) {
 	for _, s := range []string{
