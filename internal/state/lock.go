@@ -11,8 +11,9 @@ import (
 const failureLockStaleAfter = 60 * time.Second
 
 // lockWait is the total time WithFailureLock will wait for a holder to finish.
-// It only has to outlast one Slack POST; the caller proceeds unlocked after it.
-const lockWait = 2 * time.Second
+// Slack's HTTP timeout is 5 seconds, so this outlasts one POST; the caller
+// still proceeds unlocked after it.
+const lockWait = 6 * time.Second
 
 // WithFailureLock runs fn while holding a cross-process lock for one session's
 // failure note, and reports whether the lock was actually held.

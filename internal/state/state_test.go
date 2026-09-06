@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+func TestFailureLockWaitOutlastsSlackPost(t *testing.T) {
+	// Keep this timeout in sync with the HTTP client in internal/slack.Post.
+	const slackPostTimeout = 5 * time.Second
+	if lockWait <= slackPostTimeout {
+		t.Fatalf("lockWait = %s, must outlast Slack POST timeout %s", lockWait, slackPostTimeout)
+	}
+}
+
 func TestSavePeekDelete(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // keep test state out of the real ~/.claude
 	sid := "unit-save-peek-delete"
