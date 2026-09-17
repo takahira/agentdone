@@ -239,9 +239,23 @@ func saveSettings(path string, root map[string]json.RawMessage, hooks map[string
 	// run after the first would silently keep a stale backup.
 	if cur, err := os.ReadFile(path); err == nil {
 		bak := path + ".bak"
-		_ = os.Chmod(bak, 0o600) // no-op (error ignored) when .bak doesn't exist yet
-		if werr := os.WriteFile(bak, cur, mode); werr == nil {
-			_ = os.Chmod(bak, mode)
+		if fi, serr := os.Stat(bak); serr == nil {
+			// Do not chmod a squatted directory before discovering that it cannot
+			// serve as a backup file.
+			if fi.IsDir() {
+				return fmt.Errorf("write backup %s: path is a directory", bak)
+			}
+			if cerr := os.Chmod(bak, 0o600); cerr != nil {
+				return fmt.Errorf("make backup writable %s: %w", bak, cerr)
+			}
+		} else if !os.IsNotExist(serr) {
+			return fmt.Errorf("inspect backup %s: %w", bak, serr)
+		}
+		if werr := os.WriteFile(bak, cur, mode); werr != nil {
+			return fmt.Errorf("write backup %s: %w", bak, werr)
+		}
+		if cerr := os.Chmod(bak, mode); cerr != nil {
+			return fmt.Errorf("set backup permissions %s: %w", bak, cerr)
 		}
 	}
 	// Atomic write: temp in the same dir + rename, so a crash mid-write can't

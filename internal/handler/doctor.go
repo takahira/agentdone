@@ -29,10 +29,21 @@ func Doctor(w io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(w, "settings: %s\n", path)
-	if _, hooks, lerr := loadSettings(path); lerr != nil {
+	if root, hooks, lerr := loadSettings(path); lerr != nil {
 		fmt.Fprintf(w, "  ✗ unreadable: %v\n", lerr)
 		healthy = false
 	} else {
+		// Claude Code refuses to run user hooks when either setting is true.
+		// They live at the settings root, outside the hooks subtree, so valid
+		// entries alone do not mean notifications can currently work.
+		for _, setting := range []string{"disableAllHooks", "allowManagedHooksOnly"} {
+			var enabled bool
+			if raw, ok := root[setting]; ok && json.Unmarshal(raw, &enabled) == nil && enabled {
+				fmt.Fprintf(w, "  ✗ hooks restricted: %s=true\n", setting)
+				healthy = false
+			}
+		}
+
 		missing := map[string]bool{} // wired command -> binary gone (dedup across events)
 		for _, wi := range wirings() {
 			cmds := wiredCommands(hooks[wi.event])
@@ -41,7 +52,12 @@ func Doctor(w io.Writer) error {
 				healthy = false
 				continue
 			}
-			fmt.Fprintf(w, "  ✓ %s wired\n", wi.event)
+			if wiringMatches(hooks[wi.event], wi) {
+				fmt.Fprintf(w, "  ✓ %s wired\n", wi.event)
+			} else {
+				fmt.Fprintf(w, "  ✗ %s wired but mis-scoped (re-run init)\n", wi.event)
+				healthy = false
+			}
 			for _, c := range cmds {
 				if !missing[c] && !commandExists(c) {
 					missing[c] = true
@@ -113,6 +129,53 @@ func wiredCommands(matchers []json.RawMessage) []string {
 		}
 	}
 	return cmds
+}
+
+// wiringMatches reports whether every one of our entries has the matcher and
+// command contract written by init. Args must be a present, non-null empty
+// array: that is what selects exec-form. A missing async is equivalent to false,
+// matching the omitempty encoding used for synchronous hooks.
+func wiringMatches(matchers []json.RawMessage, want wiring) bool {
+	found := false
+	for _, raw := range matchers {
+		m := map[string]json.RawMessage{}
+		var hooks []json.RawMessage
+		if json.Unmarshal(raw, &m) != nil || json.Unmarshal(m["hooks"], &hooks) != nil {
+			continue
+		}
+
+		matcher := ""
+		matcherOK := true
+		if rawMatcher, ok := m["matcher"]; ok {
+			matcherOK = json.Unmarshal(rawMatcher, &matcher) == nil
+		}
+		for _, rawHook := range hooks {
+			h := map[string]json.RawMessage{}
+			if json.Unmarshal(rawHook, &h) != nil {
+				continue
+			}
+			var command string
+			if json.Unmarshal(h["command"], &command) != nil || !isOurs(command) {
+				continue
+			}
+			found = true
+
+			var hookType string
+			typeOK := json.Unmarshal(h["type"], &hookType) == nil
+			var args []json.RawMessage
+			argsOK := json.Unmarshal(h["args"], &args) == nil && args != nil && len(args) == 0
+			async := false
+			asyncOK := true
+			if rawAsync, ok := h["async"]; ok {
+				asyncOK = json.Unmarshal(rawAsync, &async) == nil
+			}
+			if !matcherOK || matcher != want.matcher || !typeOK || hookType != "command" ||
+				!argsOK || !asyncOK || async != want.async {
+				return false
+			}
+		}
+	}
+	return found
 }
 
 // commandExists reports whether the executable a wired hook command points at

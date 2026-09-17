@@ -399,6 +399,49 @@ func TestSaveSettingsBackupAndValidJSON(t *testing.T) {
 	}
 }
 
+// A squatted .bak path must make the operation fail before settings.json is
+// replaced. Otherwise init appears successful while leaving no recovery copy.
+func TestSaveSettingsBackupFailureAborts(t *testing.T) {
+	path := tempSettings(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prior := `{"env":{"IMPORTANT":"keep-me"}}`
+	if err := os.WriteFile(path, []byte(prior), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bak := path + ".bak"
+	if err := os.Mkdir(bak, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(bak)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = wireInto(path, "/curl/bin/agentdone")
+	if err == nil {
+		t.Fatal("wireInto with a directory at settings.json.bak = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), ".bak") {
+		t.Errorf("backup error does not identify .bak: %v", err)
+	}
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != prior {
+		t.Errorf("settings.json changed despite backup failure:\n got %s\nwant %s", out, prior)
+	}
+	after, err := os.Stat(bak)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.IsDir() || after.Mode().Perm() != before.Mode().Perm() {
+		t.Errorf("squatted backup directory was altered: before=%v after=%v", before.Mode(), after.Mode())
+	}
+}
+
 // A missing settings file is treated as empty, not an error.
 // A read-only settings.json (0400/0444) made the .bak inherit that mode; the
 // next write's O_TRUNC then failed with EACCES and froze the backup a generation
