@@ -32,8 +32,11 @@ agentdone は Claude Code が `Stop` フックに載せる公式の `background_
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/takahira/agentdone/main/install.sh | sh
-agentdone init   # フックを配線し、Slack Webhook を一度だけ尋ねます
 ```
+
+インストーラが `agentdone init` まで実行します（フックを配線し、Slack Webhook を一度だけ尋ねます）。
+インストール先が `PATH` に無い場合はその旨も表示します。フックはバイナリを絶対パスで呼ぶので、
+影響するのは後から自分で `agentdone` を打つときだけです。
 
 Go ツールチェインがあればソースから:
 

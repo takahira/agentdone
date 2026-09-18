@@ -18,8 +18,12 @@ premature "completed" ping while background work is still running**.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/takahira/agentdone/main/install.sh | sh
-agentdone init   # wires the hooks + prompts once for your Slack webhook
 ```
+
+The installer runs `agentdone init` for you — it wires the hooks and prompts once for
+your Slack webhook. It also tells you if the install directory is not on your `PATH`
+(the hooks call the binary by absolute path, so that only affects running
+`agentdone` yourself later).
 
 Have a Go toolchain? Install from source instead:
 

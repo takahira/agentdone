@@ -3,6 +3,7 @@ package slack
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,9 +11,24 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
+
+const (
+	maxPostAttempts     = 3
+	postAttemptTimeout  = 2 * time.Second
+	postDeliveryTimeout = 5 * time.Second
+	initialRetryBackoff = 100 * time.Millisecond
+	// maxRetryAfter caps a parsed Retry-After; anything above the delivery budget is
+	// equivalent (the budget check gives up) and this avoids int64 overflow.
+	maxRetryAfter = time.Hour
+)
+
+// sleepForRetry is replaceable by tests so retry behavior is verified without
+// making the test suite wait for backoff timers.
+var sleepForRetry = time.Sleep
 
 // escape neutralises Slack's three control characters. Much of a notification
 // is transcript-derived (prompt, summary, question, error), so an unescaped
@@ -58,26 +74,113 @@ func Post(webhookURL, text string) (err error) {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(webhookURL, "application/json", bytes.NewReader(body))
-	if err != nil {
-		// A transport error is a *url.Error whose message embeds the full webhook
-		// URL — and the webhook URL IS the secret. Redact before returning so a
-		// caller that prints it (e.g. `init`'s "Webhook test failed: %v") can't
-		// leak the token to stdout / CI logs / a shared screen.
-		return redact(err)
+	// Notifications are emitted from hook handlers on the agent's completion
+	// path. Five seconds gives transient network failures two quick retries,
+	// while keeping a finished agent from making its user wait for tens of
+	// seconds. The context is the hard cap across requests and backoff sleeps.
+	ctx, cancel := context.WithTimeout(context.Background(), postDeliveryTimeout)
+	defer cancel()
+	client := &http.Client{Timeout: postAttemptTimeout}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxPostAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
+		if err != nil {
+			return redact(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, requestErr := client.Do(req)
+		retryable := false
+		retryAfter := time.Duration(0)
+		hasRetryAfter := false
+		if requestErr != nil {
+			// A transport error is a *url.Error whose message embeds the full webhook
+			// URL — and the webhook URL IS the secret. Redact before returning so a
+			// caller that prints it (e.g. `init`'s "Webhook test failed: %v") can't
+			// leak the token to stdout / CI logs / a shared screen.
+			lastErr = redact(requestErr)
+			retryable = true
+		} else {
+			// Drain the body so the connection can be reused — bounded by a
+			// LimitReader so a misbehaving intermediary cannot stream an oversized
+			// body into the discard (Slack's real body is 2 bytes).
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			if resp.StatusCode < 300 {
+				return nil
+			}
+			lastErr = fmt.Errorf("slack webhook returned %s", resp.Status)
+			retryable = resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+			// Honor Retry-After on any retryable status, not just 429: a 503 that says
+			// "retry in 3s" would otherwise burn every attempt within ~300ms and drop
+			// a notification the delivery budget could have saved.
+			if retryable {
+				retryAfter, hasRetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+			}
+		}
+
+		if !retryable || attempt == maxPostAttempts {
+			return postDeliveryError(attempt, lastErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return postDeliveryError(attempt, fmt.Errorf("delivery deadline reached: %w", err))
+		}
+
+		delay := initialRetryBackoff << (attempt - 1)
+		if hasRetryAfter {
+			delay = retryAfter
+		}
+		// Do not begin a backoff that would exceed the total notification budget.
+		if deadline, ok := ctx.Deadline(); ok && time.Now().Add(delay).After(deadline) {
+			return postDeliveryError(attempt, fmt.Errorf("delivery deadline would expire before retrying: %w", lastErr))
+		}
+		sleepForRetry(delay)
 	}
-	defer resp.Body.Close()
-	// Slack returns 200 "ok" on success; a 4xx/5xx (e.g. invalid webhook) must be
-	// surfaced so `init`'s test ping doesn't falsely report success. Drain the
-	// body first so the connection can be reused — bounded by a LimitReader so a
-	// misbehaving intermediary can't stream an oversized body into the discard
-	// (Slack's real body is 2 bytes; the 5s client Timeout already caps wall time).
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("slack webhook returned %s", resp.Status)
+	return postDeliveryError(maxPostAttempts, lastErr)
+}
+
+func postDeliveryError(attempts int, err error) error {
+	return fmt.Errorf("slack webhook delivery failed after %d attempt(s): %w", attempts, err)
+}
+
+// parseRetryAfter accepts both forms permitted by RFC 9110: seconds and an
+// HTTP date. A past date means Slack permits an immediate retry.
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
 	}
-	return nil
+	// All digits but too large for int64 (RFC 9110 delta-seconds has no upper
+	// bound): treat as "wait at least the cap", not as an unparseable header.
+	if isAllDigits(value) && len(strings.TrimLeft(value, "0")) > 18 {
+		return maxRetryAfter, true
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		// time.Duration is int64 nanoseconds: multiplying a huge second count
+		// overflows to a negative value, which would slip past the delivery
+		// budget check and retry immediately.
+		if seconds > int64(maxRetryAfter/time.Second) {
+			return maxRetryAfter, true
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+	if retryAt, err := http.ParseTime(value); err == nil {
+		return max(retryAt.Sub(now), 0), true
+	}
+	return 0, false
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // redact strips the webhook URL from a transport error before it is logged: a

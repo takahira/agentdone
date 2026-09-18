@@ -8,7 +8,7 @@ import (
 )
 
 func TestFailureLockWaitOutlastsSlackPost(t *testing.T) {
-	// Keep this timeout in sync with the HTTP client in internal/slack.Post.
+	// Keep this timeout in sync with the delivery budget in internal/slack.Post.
 	const slackPostTimeout = 5 * time.Second
 	if lockWait <= slackPostTimeout {
 		t.Fatalf("lockWait = %s, must outlast Slack POST timeout %s", lockWait, slackPostTimeout)
