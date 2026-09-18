@@ -9,16 +9,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	maxPostAttempts     = 3
-	postAttemptTimeout  = 2 * time.Second
 	postDeliveryTimeout = 5 * time.Second
 	initialRetryBackoff = 100 * time.Millisecond
 	// maxRetryAfter caps a parsed Retry-After; anything above the delivery budget is
@@ -75,12 +76,16 @@ func Post(webhookURL, text string) (err error) {
 		return err
 	}
 	// Notifications are emitted from hook handlers on the agent's completion
-	// path. Five seconds gives transient network failures two quick retries,
-	// while keeping a finished agent from making its user wait for tens of
-	// seconds. The context is the hard cap across requests and backoff sleeps.
+	// path. Five seconds gives transient network failures quick retries while
+	// keeping a finished agent from making its user wait for tens of seconds.
+	// The context is the ONLY cap, across requests and backoff sleeps: there is
+	// deliberately no shorter per-attempt timeout. A slow Slack that answers in,
+	// say, 3s must still succeed on the first POST as it did before retries
+	// existed; cutting that attempt short would re-send a webhook Slack may have
+	// already accepted (a duplicate) and could exhaust the budget on timeouts.
 	ctx, cancel := context.WithTimeout(context.Background(), postDeliveryTimeout)
 	defer cancel()
-	client := &http.Client{Timeout: postAttemptTimeout}
+	client := &http.Client{}
 
 	var lastErr error
 	for attempt := 1; attempt <= maxPostAttempts; attempt++ {
@@ -89,6 +94,20 @@ func Post(webhookURL, text string) (err error) {
 			return redact(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		// Track whether the request reached Slack in full. A transport error
+		// BEFORE that (DNS, refused, TLS handshake, a reset while sending) means
+		// Slack never saw the message, so a retry cannot duplicate it. An error
+		// AFTER it (EOF or the deadline while waiting for the response) is
+		// ambiguous: Slack may already have posted it, and an incoming webhook
+		// has no idempotency key, so re-sending would duplicate the ping.
+		var wrote atomic.Bool
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+			WroteRequest: func(info httptrace.WroteRequestInfo) {
+				if info.Err == nil {
+					wrote.Store(true)
+				}
+			},
+		}))
 
 		resp, requestErr := client.Do(req)
 		retryable := false
@@ -100,6 +119,10 @@ func Post(webhookURL, text string) (err error) {
 			// caller that prints it (e.g. `init`'s "Webhook test failed: %v") can't
 			// leak the token to stdout / CI logs / a shared screen.
 			lastErr = redact(requestErr)
+			if wrote.Load() {
+				return postDeliveryError(attempt, fmt.Errorf(
+					"sent, but no response (not re-sent, to avoid a duplicate): %w", lastErr))
+			}
 			retryable = true
 		} else {
 			// Drain the body so the connection can be reused — bounded by a

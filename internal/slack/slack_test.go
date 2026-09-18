@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -241,6 +242,83 @@ func TestParseRetryAfter(t *testing.T) {
 	// Leading zeros do not make a value large: this is 1 second.
 	if got, ok := parseRetryAfter("0000000000000000001", now); !ok || got != time.Second {
 		t.Errorf("zero-padded Retry-After = %s, %v; want 1s, true", got, ok)
+	}
+}
+
+func TestPostSlowSuccessIsNotRetried(t *testing.T) {
+	// A Slack that is slow but succeeds within the delivery budget must be
+	// delivered by a single POST. A per-attempt timeout shorter than the budget
+	// would abandon the first POST, re-send (duplicating it if Slack had already
+	// accepted it) and, with every answer this slow, fail outright.
+	if testing.Short() {
+		t.Skip("waits ~2.5s for a slow server")
+	}
+	t.Setenv("AGENTDONE_STDOUT", "")
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		time.Sleep(2500 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := Post(srv.URL, "hi"); err != nil {
+		t.Fatalf("Post to a slow but healthy webhook = %v, want nil", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("requests = %d, want exactly 1 (no retry of a slow success)", got)
+	}
+}
+
+func TestPostDoesNotResendAfterTheRequestWasSent(t *testing.T) {
+	// Slack received the whole POST but the connection dropped before any
+	// response: the message may already be posted, and an incoming webhook has
+	// no idempotency key, so a retry would duplicate the ping.
+	t.Setenv("AGENTDONE_STDOUT", "")
+	waits := replaceRetrySleep(t)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body) // the full request arrived
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		_ = conn.Close() // drop it without a response
+	}))
+	defer srv.Close()
+
+	err := Post(srv.URL, "hi")
+	if err == nil {
+		t.Fatal("Post with a dropped response = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "not re-sent") {
+		t.Errorf("error = %v, want it to say the message was not re-sent", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("requests = %d, want exactly 1 (no resend after the request was sent)", got)
+	}
+	if len(*waits) != 0 {
+		t.Errorf("retry waits = %v, want none", *waits)
+	}
+}
+
+func TestPostRetriesFailuresBeforeTheRequestWasSent(t *testing.T) {
+	// Nothing listens on the port, so the POST never leaves the machine: a retry
+	// cannot duplicate it and should be attempted.
+	t.Setenv("AGENTDONE_STDOUT", "")
+	waits := replaceRetrySleep(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+
+	err := Post(url, "hi")
+	if err == nil || !strings.Contains(err.Error(), "after 3 attempt(s)") {
+		t.Fatalf("error = %v, want delivery to fail after 3 attempts", err)
+	}
+	if got, want := *waits, []time.Duration{100 * time.Millisecond, 200 * time.Millisecond}; !slicesEqual(got, want) {
+		t.Errorf("retry waits = %v, want %v", got, want)
 	}
 }
 
