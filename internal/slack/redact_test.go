@@ -8,6 +8,35 @@ import (
 
 // A credential that reaches Post() must never appear in what is sent. These are the
 // shapes seen in real prompts and assistant summaries.
+func TestRedactOtherChatWebhooks(t *testing.T) {
+	// A webhook URL hides its credential in the path, so the key=value and user:pass rules
+	// cannot see it. hooks.slack.com is handled above; the sibling shapes leaked verbatim.
+	cases := []struct{ name, in, leak, keep string }{
+		{"discord", "curl https://discord.com/api/webhooks/123456789/AbCdEfGhIjKlMnOpQrStUvWxYz",
+			"AbCdEfGhIjKlMnOpQrStUvWxYz", "discord.com/api/webhooks/"},
+		{"google chat", "curl https://chat.googleapis.com/v1/spaces/AAA/messages",
+			"spaces/AAA", "chat.googleapis.com/v1/spaces/"},
+		{"discord with port", "curl https://discord.com:443/api/webhooks/1/TokenAbCdEfGhIjKl",
+			"TokenAbCdEfGhIjKl", "discord.com:443/api/webhooks/"},
+	}
+	for _, c := range cases {
+		got := RedactSecrets(c.in)
+		if strings.Contains(got, c.leak) {
+			t.Errorf("%s: credential still present: %s", c.name, got)
+		}
+		if !strings.Contains(got, c.keep) {
+			t.Errorf("%s: destination host lost: %s", c.name, got)
+		}
+	}
+}
+
+func TestRedactLeavesOrdinaryURLs(t *testing.T) {
+	in := "curl https://api.github.com/repos/o/r/issues"
+	if got := RedactSecrets(in); got != in {
+		t.Errorf("ordinary URL changed: %s", got)
+	}
+}
+
 func TestRedactSecrets(t *testing.T) {
 	cases := []struct {
 		name   string

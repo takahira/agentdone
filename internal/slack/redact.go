@@ -77,6 +77,11 @@ var (
 	// `https://hooks.slack.com:443/services/T/B/tok` reached Slack in the clear.
 	slackWebhookRe = regexp.MustCompile(`(?i)(\bhooks\.slack\.com(?::\d+)?/services/)[A-Za-z0-9/_-]+`)
 
+	// Other chat webhooks carry their credential in the path the same way. They are not where
+	// this tool posts, but one can appear inside a command the notification quotes, and then
+	// the Slack message hands that credential to everyone in the channel.
+	otherWebhookRe = regexp.MustCompile(`(?i)(\b(?:discord(?:app)?\.com(?::\d+)?/api/webhooks|outlook\.office(?:365)?\.com(?::\d+)?/webhook|chat\.googleapis\.com(?::\d+)?/v1/spaces)/)[A-Za-z0-9/_.-]+`)
+
 	// Provider token shapes that are recognisable on their own.
 	tokenShapeRes = []*regexp.Regexp{
 		regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`),   // GitHub
@@ -148,6 +153,7 @@ func RedactSecrets(s string) string {
 	s = keepPrefix(userPassRe, s)
 	s = urlCredRe.ReplaceAllString(s, "${1}"+mask+"${3}")
 	s = keepPrefix(slackWebhookRe, s)
+	s = keepPrefix(otherWebhookRe, s)
 	s = keepPrefix(bearerRe, s)
 	for _, re := range tokenShapeRes {
 		s = re.ReplaceAllString(s, mask)
