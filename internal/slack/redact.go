@@ -86,8 +86,11 @@ var (
 	tokenShapeRes = []*regexp.Regexp{
 		regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`),   // GitHub
 		regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`), // GitHub fine-grained
-		regexp.MustCompile(`\bsk-[A-Za-z0-9-]{16,}`),         // OpenAI-style
+		// sk- keys are base64url, so `_` belongs in the body: without it the match
+		// stopped at the first `_` and the key's tail reached Slack in the clear.
+		// The specific Anthropic shape runs first; the generic rule is a superset.
 		regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{16,}`),    // Anthropic
+		regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),        // OpenAI-style (sk-proj-, legacy sk-)
 		regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}`), // Slack
 		regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),           // AWS access key id
 		regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),      // Google API key

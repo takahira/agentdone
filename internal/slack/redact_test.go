@@ -177,3 +177,28 @@ func TestPostRedactsBeforeSending(t *testing.T) {
 		t.Fatalf("expected a mask in the payload: %s", got)
 	}
 }
+
+// Bare sk- keys (no credential-shaped key name in front) must be masked whole even
+// when the body contains `_`, which base64url keys routinely do. The generic sk- rule
+// used to stop at the first `_`, so only the prefix was masked and the tail was posted
+// in the clear. Fixtures are assembled at runtime and obviously fake so secret
+// scanners do not flag them.
+func TestRedactBareSkKeysWithUnderscore(t *testing.T) {
+	fake := "FAKE" + "FAKE" + "FAKE" + "FAKE"
+	cases := []struct{ name, key string }{
+		{"anthropic", "sk-" + "ant-" + "api03-" + fake + "_TAILfake01-x_TAILfake02"},
+		{"openai project", "sk-" + "proj-" + fake + "_TAILfake03"},
+		{"openai legacy", "sk-" + fake + "_TAILfake04"},
+		{"underscore early", "sk-" + "ab_" + fake + "TAILfake05"},
+	}
+	for _, c := range cases {
+		in := "try this key: " + c.key + " thanks"
+		got := RedactSecrets(in)
+		if got != "try this key: "+mask+" thanks" {
+			t.Errorf("%s: key not fully masked: %q", c.name, got)
+		}
+		if strings.Contains(got, "TAILfake") || strings.Contains(got, fake) {
+			t.Errorf("%s: key fragment leaked: %q", c.name, got)
+		}
+	}
+}
